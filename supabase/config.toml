@@ -1,0 +1,4 @@
+project_id = "dewkymjoublfacoaudft"
+
+[functions.restaurant-ai]
+verify_jwt = false

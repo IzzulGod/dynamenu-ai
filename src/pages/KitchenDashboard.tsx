@@ -1,0 +1,317 @@
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  ChefHat, Clock, CheckCircle, Truck, LogOut, 
+  RefreshCw, Bell, Coffee, Loader2 
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useAllOrders, useUpdateOrderStatus } from '@/hooks/useOrders';
+import { OrderWithItems } from '@/types/restaurant';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+
+const statusConfig = {
+  pending: { label: 'Menunggu', icon: Clock, color: 'bg-amber-100 text-amber-700 border-amber-200' },
+  confirmed: { label: 'Dikonfirmasi', icon: CheckCircle, color: 'bg-blue-100 text-blue-700 border-blue-200' },
+  preparing: { label: 'Dimasak', icon: Coffee, color: 'bg-purple-100 text-purple-700 border-purple-200' },
+  ready: { label: 'Siap', icon: Bell, color: 'bg-green-100 text-green-700 border-green-200' },
+  delivered: { label: 'Diantar', icon: Truck, color: 'bg-gray-100 text-gray-700 border-gray-200' },
+  cancelled: { label: 'Dibatalkan', icon: Clock, color: 'bg-red-100 text-red-700 border-red-200' },
+};
+
+export default function KitchenDashboard() {
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState<'pending' | 'preparing' | 'ready'>('pending');
+  const { data: allOrders = [], isLoading, refetch } = useAllOrders();
+  const updateStatus = useUpdateOrderStatus();
+
+  // Check auth
+  useEffect(() => {
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        navigate('/admin');
+      }
+    };
+    checkSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!session) {
+        navigate('/admin');
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [navigate]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate('/admin');
+  };
+
+  const getFilteredOrders = (status: string[]) => {
+    return allOrders.filter((order) => status.includes(order.status));
+  };
+
+  const handleStatusUpdate = async (orderId: string, newStatus: OrderWithItems['status']) => {
+    try {
+      await updateStatus.mutateAsync({ orderId, status: newStatus });
+      toast.success(`Status diupdate: ${statusConfig[newStatus].label}`);
+    } catch (error) {
+      toast.error('Gagal update status');
+    }
+  };
+
+  const formatTime = (dateString: string) => {
+    return new Date(dateString).toLocaleTimeString('id-ID', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const formatPrice = (price: number) => {
+    return new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      minimumFractionDigits: 0,
+    }).format(price);
+  };
+
+  const OrderCard = ({ order }: { order: OrderWithItems }) => {
+    const status = statusConfig[order.status];
+    const StatusIcon = status.icon;
+
+    return (
+      <motion.div
+        layout
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.9 }}
+      >
+        <Card className="overflow-hidden">
+          <CardHeader className={cn('py-3', status.color)}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <StatusIcon className="w-4 h-4" />
+                <CardTitle className="text-base">
+                  Meja {order.tables?.table_number || '-'}
+                </CardTitle>
+              </div>
+              <div className="text-sm font-normal">
+                {formatTime(order.created_at)}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="p-4 space-y-4">
+            {/* Order Items */}
+            <div className="space-y-2">
+              {order.order_items.map((item) => (
+                <div key={item.id} className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <span className="font-medium">
+                      {item.quantity}x {item.menu_items?.name || 'Item'}
+                    </span>
+                    {item.notes && (
+                      <p className="text-xs text-muted-foreground">{item.notes}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Notes */}
+            {order.notes && (
+              <div className="text-sm text-muted-foreground bg-muted p-2 rounded">
+                📝 {order.notes}
+              </div>
+            )}
+
+            {/* Total */}
+            <div className="flex justify-between items-center pt-2 border-t">
+              <span className="text-sm text-muted-foreground">Total</span>
+              <span className="font-bold text-primary">
+                {formatPrice(order.total_amount)}
+              </span>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-2">
+              {order.status === 'pending' && (
+                <Button
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => handleStatusUpdate(order.id, 'confirmed')}
+                >
+                  Konfirmasi
+                </Button>
+              )}
+              {order.status === 'confirmed' && (
+                <Button
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => handleStatusUpdate(order.id, 'preparing')}
+                >
+                  Mulai Masak
+                </Button>
+              )}
+              {order.status === 'preparing' && (
+                <Button
+                  size="sm"
+                  className="flex-1 bg-sage hover:bg-sage/90"
+                  onClick={() => handleStatusUpdate(order.id, 'ready')}
+                >
+                  Siap Antar
+                </Button>
+              )}
+              {order.status === 'ready' && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => handleStatusUpdate(order.id, 'delivered')}
+                >
+                  Sudah Diantar
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </motion.div>
+    );
+  };
+
+  const pendingOrders = getFilteredOrders(['pending', 'confirmed']);
+  const preparingOrders = getFilteredOrders(['preparing']);
+  const readyOrders = getFilteredOrders(['ready']);
+
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="sticky top-0 z-40 bg-background border-b border-border">
+        <div className="container py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                <ChefHat className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <h1 className="font-bold text-foreground">Dashboard Dapur</h1>
+                <p className="text-xs text-muted-foreground">
+                  {allOrders.length} pesanan aktif
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => refetch()}
+                disabled={isLoading}
+              >
+                <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
+              </Button>
+              <Button variant="ghost" size="icon" onClick={handleLogout}>
+                <LogOut className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Tabs */}
+      <div className="container py-4">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)}>
+          <TabsList className="grid grid-cols-3 mb-4">
+            <TabsTrigger value="pending" className="gap-2">
+              <Clock className="w-4 h-4" />
+              Baru
+              {pendingOrders.length > 0 && (
+                <Badge variant="secondary" className="ml-1">
+                  {pendingOrders.length}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="preparing" className="gap-2">
+              <Coffee className="w-4 h-4" />
+              Dimasak
+              {preparingOrders.length > 0 && (
+                <Badge variant="secondary" className="ml-1">
+                  {preparingOrders.length}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="ready" className="gap-2">
+              <Bell className="w-4 h-4" />
+              Siap
+              {readyOrders.length > 0 && (
+                <Badge variant="secondary" className="ml-1">
+                  {readyOrders.length}
+                </Badge>
+              )}
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="pending">
+            {isLoading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              </div>
+            ) : pendingOrders.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="text-5xl mb-4">😴</div>
+                <p className="text-muted-foreground">Tidak ada pesanan baru</p>
+              </div>
+            ) : (
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <AnimatePresence mode="popLayout">
+                  {pendingOrders.map((order) => (
+                    <OrderCard key={order.id} order={order} />
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="preparing">
+            {preparingOrders.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="text-5xl mb-4">👨‍🍳</div>
+                <p className="text-muted-foreground">Tidak ada yang sedang dimasak</p>
+              </div>
+            ) : (
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <AnimatePresence mode="popLayout">
+                  {preparingOrders.map((order) => (
+                    <OrderCard key={order.id} order={order} />
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="ready">
+            {readyOrders.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="text-5xl mb-4">✅</div>
+                <p className="text-muted-foreground">Tidak ada pesanan siap antar</p>
+              </div>
+            ) : (
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <AnimatePresence mode="popLayout">
+                  {readyOrders.map((order) => (
+                    <OrderCard key={order.id} order={order} />
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
