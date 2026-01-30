@@ -45,14 +45,29 @@ export default function MenuPage() {
     }
   }, [table, tableId, setTable]);
 
-  // Send initial greeting - use ref to prevent duplicate sends
+  // Send initial greeting
+  // NOTE: In React 18 dev StrictMode, effects can run twice due to mount->unmount->mount.
+  // Use localStorage (per session+table) so the greeting is only sent once across remounts.
   const greetingSentRef = useRef(false);
   useEffect(() => {
-    if (table && messages.length === 0 && !chatLoading && !greetingSentRef.current) {
-      greetingSentRef.current = true;
-      sendMessage(`Halo! Aku baru sampai di meja ${table.table_number}`).catch(console.error);
+    if (!table || chatLoading || messages.length !== 0) return;
+    if (greetingSentRef.current) return;
+
+    const storageKey = `restoai:greeting_sent:${sessionId}:${table.id}`;
+
+    try {
+      if (localStorage.getItem(storageKey) === '1') {
+        greetingSentRef.current = true;
+        return;
+      }
+      localStorage.setItem(storageKey, '1');
+    } catch {
+      // If storage is blocked, we still rely on the ref (best-effort)
     }
-  }, [table, messages.length, sendMessage, chatLoading]);
+
+    greetingSentRef.current = true;
+    sendMessage(`Halo! Aku baru sampai di meja ${table.table_number}`).catch(console.error);
+  }, [table, messages.length, sendMessage, chatLoading, sessionId]);
 
   const handleCheckout = async () => {
     if (!table || cartItems.length === 0) {
