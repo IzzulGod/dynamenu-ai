@@ -1,8 +1,10 @@
 import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { ChatMessage } from '@/types/restaurant';
+import { ChatMessage, MenuItem } from '@/types/restaurant';
+import { AIAction, AIResponse } from '@/types/ai-actions';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { useCart } from './useCart';
 
 function dedupeConsecutiveMessages(input: ChatMessage[]) {
   const out: ChatMessage[] = [];
@@ -30,11 +32,18 @@ function dedupeConsecutiveMessages(input: ChatMessage[]) {
   return out;
 }
 
-export function useChat(sessionId: string, tableId: string | null) {
+interface UseChatOptions {
+  menuItems?: MenuItem[];
+}
+
+export function useChat(sessionId: string, tableId: string | null, options: UseChatOptions = {}) {
   const [isLoading, setIsLoading] = useState(false);
+  const [lastActions, setLastActions] = useState<AIAction[]>([]);
   const queryClient = useQueryClient();
   const lastRequestTimeRef = useRef<number>(0);
   const requestInProgressRef = useRef<boolean>(false);
+  
+  const { items: cartItems, addItem, updateNotes, removeItem } = useCart();
 
   const { data: messages = [] } = useQuery({
     queryKey: ['chat-messages', sessionId],
@@ -50,6 +59,76 @@ export function useChat(sessionId: string, tableId: string | null) {
     },
     enabled: !!sessionId,
   });
+
+  // Process AI actions and update cart
+  const processActions = useCallback((actions: AIAction[], menuItems?: MenuItem[]) => {
+    if (!actions || actions.length === 0) return;
+
+    for (const action of actions) {
+      switch (action.type) {
+        case 'add_to_cart': {
+          // Find menu item by ID or name
+          const menuItem = menuItems?.find(
+            (item) => item.id === action.menuItemId || 
+                      item.name.toLowerCase() === action.menuItemName?.toLowerCase()
+          );
+          
+          if (menuItem) {
+            addItem(menuItem, action.quantity || 1, action.notes);
+            toast.success(`${action.quantity || 1}x ${menuItem.name} ditambahkan ke keranjang! 🛒`, {
+              description: action.notes ? `Catatan: ${action.notes}` : undefined,
+            });
+          } else {
+            console.warn('Menu item not found for action:', action);
+          }
+          break;
+        }
+        
+        case 'update_notes': {
+          // Find item in cart and update notes
+          const cartItem = cartItems.find(
+            (item) => item.menuItem.id === action.menuItemId ||
+                      item.menuItem.name.toLowerCase() === action.menuItemName?.toLowerCase()
+          );
+          
+          if (cartItem && action.notes) {
+            updateNotes(cartItem.menuItem.id, action.notes);
+            toast.success(`Catatan ditambahkan ke ${cartItem.menuItem.name}! 📝`, {
+              description: action.notes,
+            });
+          } else if (!cartItem && action.notes) {
+            // Item not in cart yet, try to add with notes
+            const menuItem = menuItems?.find(
+              (item) => item.id === action.menuItemId ||
+                        item.name.toLowerCase() === action.menuItemName?.toLowerCase()
+            );
+            if (menuItem) {
+              addItem(menuItem, action.quantity || 1, action.notes);
+              toast.success(`${menuItem.name} ditambahkan dengan catatan! 📝`, {
+                description: action.notes,
+              });
+            }
+          }
+          break;
+        }
+        
+        case 'remove_from_cart': {
+          const cartItem = cartItems.find(
+            (item) => item.menuItem.id === action.menuItemId ||
+                      item.menuItem.name.toLowerCase() === action.menuItemName?.toLowerCase()
+          );
+          
+          if (cartItem) {
+            removeItem(cartItem.menuItem.id);
+            toast.info(`${cartItem.menuItem.name} dihapus dari keranjang`);
+          }
+          break;
+        }
+      }
+    }
+    
+    setLastActions(actions);
+  }, [cartItems, addItem, updateNotes, removeItem]);
 
   const sendMessage = useCallback(
     async (content: string): Promise<string> => {
@@ -80,7 +159,15 @@ export function useChat(sessionId: string, tableId: string | null) {
           content,
         });
 
-        // Call AI edge function
+        // Prepare cart context for AI
+        const cartContext = cartItems.map((item) => ({
+          menuItemId: item.menuItem.id,
+          name: item.menuItem.name,
+          quantity: item.quantity,
+          notes: item.notes,
+        }));
+
+        // Call AI edge function with cart context
         const response = await supabase.functions.invoke('restaurant-ai', {
           body: {
             messages: [
@@ -89,11 +176,11 @@ export function useChat(sessionId: string, tableId: string | null) {
             ],
             sessionId,
             tableId,
+            cart: cartContext,
           },
         });
 
         if (response.error) {
-          // Handle rate limit specifically
           if (response.error.message?.includes('429') || response.error.message?.includes('rate')) {
             toast.error('AI sedang sibuk, coba lagi dalam beberapa detik');
             return 'Maaf, aku lagi sibuk. Coba lagi sebentar ya! 😅';
@@ -101,7 +188,13 @@ export function useChat(sessionId: string, tableId: string | null) {
           throw response.error;
         }
 
-        const assistantMessage = response.data?.message || 'Maaf, ada kendala. Coba lagi ya!';
+        const aiResponse = response.data as AIResponse;
+        const assistantMessage = aiResponse?.message || 'Maaf, ada kendala. Coba lagi ya!';
+
+        // Process any actions from AI
+        if (aiResponse?.actions && aiResponse.actions.length > 0) {
+          processActions(aiResponse.actions, options.menuItems);
+        }
 
         // Save assistant message
         await supabase.from('chat_messages').insert({
@@ -124,12 +217,13 @@ export function useChat(sessionId: string, tableId: string | null) {
         requestInProgressRef.current = false;
       }
     },
-    [sessionId, tableId, messages, queryClient]
+    [sessionId, tableId, messages, queryClient, cartItems, processActions, options.menuItems]
   );
 
   return {
     messages,
     sendMessage,
     isLoading,
+    lastActions,
   };
 }

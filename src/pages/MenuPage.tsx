@@ -34,7 +34,9 @@ export default function MenuPage() {
   const { data: menuItems = [], isLoading: menuLoading } = useMenuItems(selectedCategory ?? undefined);
   
   const { items: cartItems, getTotalAmount, clearCart, setTable, tableId } = useCart();
-  const { messages, sendMessage, isLoading: chatLoading } = useChat(sessionId, table?.id ?? null);
+  const { messages, sendMessage, isLoading: chatLoading } = useChat(sessionId, table?.id ?? null, {
+    menuItems,
+  });
   
   const createOrder = useCreateOrder();
 

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Bot, User, Sparkles, Loader2 } from 'lucide-react';
+import { Send, Bot, User, Sparkles, Loader2, ShoppingCart, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ChatMessage } from '@/types/restaurant';
@@ -39,7 +39,12 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
     'Menu rekomendasinya apa?',
     'Ada yang pedas ga?',
     'Minuman segar dong!',
-    'Yang sehat ada apa?',
+    'Aku alergi kacang',
+  ];
+
+  const actionExamples = [
+    { icon: ShoppingCart, text: 'Masukin Nasi Goreng ke keranjang' },
+    { icon: FileText, text: 'Tambah catatan: tidak pedas' },
   ];
 
   return (
@@ -53,7 +58,7 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
           <div>
             <h3 className="font-semibold text-foreground">Asisten Restoran AI</h3>
             <p className="text-xs text-muted-foreground">
-              {tableNumber ? `Meja ${tableNumber}` : 'Siap membantu!'} • Online
+              {tableNumber ? `Meja ${tableNumber}` : 'Siap membantu!'} • Bisa tambah ke keranjang! 🛒
             </p>
           </div>
           <Sparkles className="w-5 h-5 text-primary ml-auto animate-pulse" />
@@ -70,9 +75,11 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
           >
             <div className="text-5xl mb-4">👋</div>
             <p className="text-muted-foreground mb-4">
-              Hai! Aku asisten AI restoran. Mau tanya-tanya atau langsung pesan?
+              Hai! Aku asisten AI restoran. Mau tanya-tanya, minta rekomendasi, atau langsung pesan?
             </p>
-            <div className="flex flex-wrap justify-center gap-2">
+            
+            {/* Quick suggestions */}
+            <div className="flex flex-wrap justify-center gap-2 mb-6">
               {quickSuggestions.map((suggestion) => (
                 <Button
                   key={suggestion}
@@ -87,6 +94,26 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
                   {suggestion}
                 </Button>
               ))}
+            </div>
+
+            {/* Action examples hint */}
+            <div className="bg-muted/50 rounded-xl p-4 text-left max-w-xs mx-auto">
+              <p className="text-xs font-medium text-muted-foreground mb-2">💡 Fitur baru:</p>
+              <div className="space-y-2">
+                {actionExamples.map((example, i) => (
+                  <button
+                    key={i}
+                    className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors w-full text-left"
+                    onClick={() => {
+                      setInput(example.text);
+                      inputRef.current?.focus();
+                    }}
+                  >
+                    <example.icon className="w-3 h-3 text-primary" />
+                    <span>"{example.text}"</span>
+                  </button>
+                ))}
+              </div>
             </div>
           </motion.div>
         )}
@@ -155,7 +182,7 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ketik pesan atau tanya menu..."
+            placeholder="Ketik pesan, minta rekomendasi, atau suruh tambah ke keranjang..."
             className="flex-1 h-12 rounded-xl"
             disabled={isLoading}
           />

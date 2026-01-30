@@ -6,16 +6,33 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version, x-session-id",
 };
 
-// Input validation schema (manual implementation for Deno compatibility)
+// Input validation schema
 interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
+}
+
+interface CartItem {
+  menuItemId: string;
+  name: string;
+  quantity: number;
+  notes?: string;
 }
 
 interface RequestPayload {
   sessionId: string;
   tableId: string | null;
   messages: ChatMessage[];
+  cart?: CartItem[];
+}
+
+// AI Actions that can manipulate the cart
+interface AIAction {
+  type: 'add_to_cart' | 'update_notes' | 'remove_from_cart';
+  menuItemId: string;
+  menuItemName?: string;
+  quantity?: number;
+  notes?: string;
 }
 
 function validateSessionId(sessionId: unknown): string {
@@ -25,7 +42,6 @@ function validateSessionId(sessionId: unknown): string {
   if (sessionId.length < 10 || sessionId.length > 100) {
     throw new Error('sessionId must be between 10 and 100 characters');
   }
-  // Validate format: session_timestamp_randomstring
   if (!/^session_\d+_[a-z0-9]+$/i.test(sessionId)) {
     throw new Error('Invalid sessionId format');
   }
@@ -39,7 +55,6 @@ function validateTableId(tableId: unknown): string | null {
   if (typeof tableId !== 'string') {
     throw new Error('tableId must be a string or null');
   }
-  // UUID format validation
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tableId)) {
     throw new Error('tableId must be a valid UUID');
   }
@@ -80,22 +95,72 @@ function validateMessages(messages: unknown): ChatMessage[] {
   });
 }
 
+function validateCart(cart: unknown): CartItem[] {
+  if (cart === null || cart === undefined) {
+    return [];
+  }
+  if (!Array.isArray(cart)) {
+    return [];
+  }
+  return cart.filter((item): item is CartItem => 
+    typeof item === 'object' && 
+    item !== null && 
+    typeof item.menuItemId === 'string'
+  );
+}
+
 function validateRequest(data: unknown): RequestPayload {
   if (typeof data !== 'object' || data === null) {
     throw new Error('Request body must be an object');
   }
   
-  const { sessionId, tableId, messages } = data as Record<string, unknown>;
+  const { sessionId, tableId, messages, cart } = data as Record<string, unknown>;
   
   return {
     sessionId: validateSessionId(sessionId),
     tableId: validateTableId(tableId),
     messages: validateMessages(messages),
+    cart: validateCart(cart),
   };
 }
 
+function parseAIActions(content: string, menuItems: Array<{ id: string; name: string }>): AIAction[] {
+  const actions: AIAction[] = [];
+  
+  // Look for action markers in the AI response
+  // Format: [[ACTION:type:menuItemName:quantity:notes]]
+  const actionPattern = /\[\[ACTION:(add_to_cart|update_notes|remove_from_cart):([^:]+)(?::(\d+))?(?::([^\]]+))?\]\]/g;
+  
+  let match;
+  while ((match = actionPattern.exec(content)) !== null) {
+    const [, type, menuItemName, quantityStr, notes] = match;
+    
+    // Find menu item by name (case-insensitive partial match)
+    const menuItem = menuItems.find(item => 
+      item.name.toLowerCase().includes(menuItemName.toLowerCase()) ||
+      menuItemName.toLowerCase().includes(item.name.toLowerCase())
+    );
+    
+    if (menuItem) {
+      actions.push({
+        type: type as AIAction['type'],
+        menuItemId: menuItem.id,
+        menuItemName: menuItem.name,
+        quantity: quantityStr ? parseInt(quantityStr, 10) : 1,
+        notes: notes || undefined,
+      });
+    }
+  }
+  
+  return actions;
+}
+
+function cleanMessageFromActions(content: string): string {
+  // Remove action markers from the visible message
+  return content.replace(/\[\[ACTION:[^\]]+\]\]/g, '').trim();
+}
+
 Deno.serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -116,7 +181,6 @@ Deno.serve(async (req) => {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-    // Parse and validate request body
     let rawData: unknown;
     try {
       rawData = await req.json();
@@ -130,7 +194,6 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Validate input
     let validatedData: RequestPayload;
     try {
       validatedData = validateRequest(rawData);
@@ -145,9 +208,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { messages, sessionId, tableId } = validatedData;
+    const { messages, sessionId, tableId, cart } = validatedData;
 
-    console.log("Validated request:", { sessionId, tableId, messageCount: messages.length });
+    console.log("Validated request:", { sessionId, tableId, messageCount: messages.length, cartItems: cart?.length ?? 0 });
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -174,8 +237,7 @@ Deno.serve(async (req) => {
       console.error("Error fetching menu:", menuError);
     }
 
-    // Fetch current cart/orders for this session using service role to bypass RLS
-    // Note: We use service role here because we validated the sessionId above
+    // Fetch current orders for this session
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const supabaseAdmin = SUPABASE_SERVICE_ROLE_KEY 
       ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
@@ -201,8 +263,9 @@ Deno.serve(async (req) => {
       console.error("Error fetching orders:", ordersError);
     }
 
-    // Build menu context
+    // Build menu context with IDs for AI to reference
     const menuContext = menuItems?.map((item: Record<string, unknown>) => ({
+      id: item.id,
       name: item.name,
       description: item.description,
       price: `Rp${(item.price as number).toLocaleString('id-ID')}`,
@@ -221,7 +284,14 @@ Deno.serve(async (req) => {
       ).join(', ') || 'Kosong',
     })) || [];
 
-    // System prompt for restaurant AI
+    // Build cart context
+    const cartContext = cart?.map((item) => ({
+      name: item.name,
+      quantity: item.quantity,
+      notes: item.notes || 'Tidak ada catatan',
+    })) || [];
+
+    // System prompt for restaurant AI with cart manipulation capabilities
     const systemPrompt = `Kamu adalah asisten AI ramah di restoran. Nama kamu adalah "RestoAI".
 
 TUGAS UTAMA:
@@ -229,31 +299,47 @@ TUGAS UTAMA:
 2. Memberikan rekomendasi menu berdasarkan preferensi
 3. Menjawab pertanyaan tentang menu (bahan, alergi, porsi)
 4. Membantu proses pemesanan via chat
+5. BARU: Kamu BISA menambahkan item ke keranjang dan menambahkan catatan alergi/preferensi
 
-MENU TERSEDIA:
+MENU TERSEDIA (gunakan nama persis untuk action):
 ${JSON.stringify(menuContext, null, 2)}
 
 PESANAN TERBARU CUSTOMER INI:
 ${JSON.stringify(orderContext, null, 2)}
 
+KERANJANG SAAT INI:
+${cartContext.length > 0 ? JSON.stringify(cartContext, null, 2) : 'Kosong'}
+
+FITUR MANIPULASI KERANJANG:
+Kamu bisa menambahkan item ke keranjang atau menambahkan catatan dengan format khusus di akhir pesan.
+Format: [[ACTION:tipe:nama_menu:jumlah:catatan]]
+
+Contoh action:
+- Tambah 1 Nasi Goreng: [[ACTION:add_to_cart:Nasi Goreng:1:]]
+- Tambah 2 Es Teh dengan catatan: [[ACTION:add_to_cart:Es Teh:2:Gula dikit]]
+- Tambah catatan alergi ke item di keranjang: [[ACTION:update_notes:Nasi Goreng:1:Tidak pakai kacang, alergi]]
+- Hapus dari keranjang: [[ACTION:remove_from_cart:Nasi Goreng:1:]]
+
 ATURAN PENTING:
 - Jawab dalam Bahasa Indonesia dengan santai tapi sopan
-- Jika ditanya rekomendasi, lihat tags dan deskripsi menu
-- Untuk diet/alergi, periksa tags (vegetarian, sehat, pedas, dll)
-- Sebutkan harga jika relevan
-- Jika customer mau pesan, arahkan untuk klik tombol "+" di menu atau konfirmasi item
+- Jika customer setuju dengan rekomendasi dan minta dimasukkan ke keranjang, GUNAKAN ACTION!
+- Jika customer bilang alergi/tidak mau bahan tertentu, tambahkan catatan dengan ACTION update_notes
+- Konfirmasi dulu sebelum menambahkan ke keranjang kecuali customer sudah jelas minta
+- Nama menu di action HARUS sesuai dengan menu yang tersedia
 - Respon singkat dan helpful, maksimal 2-3 kalimat
 - Jangan pernah buat menu palsu yang tidak ada di daftar
 - Jika tidak yakin, jujur saja dan tawarkan untuk panggil waiter
 
-CONTOH RESPON:
-User: "Ada yang seger ga?"
-AI: "Ada dong! 🍊 Jus Jeruk Segar (Rp25.000) fresh banget, atau Smoothie Berry buat yang suka sehat. Mau coba yang mana?"
+CONTOH DIALOG:
+User: "Rekomendasiin minuman seger dong"
+AI: "Buat seger, Jus Jeruk Segar (Rp25.000) paling mantap! Fresh dan vitamin C tinggi. Mau aku masukin ke keranjang?"
 
-User: "Aku lagi diet"
-AI: "Mantap! 💪 Coba Salad Garden Bowl, sehat dan segar. Atau Grilled Salmon buat protein tinggi. Keduanya recommended lho!"`;
+User: "Iya masukin 2"
+AI: "Siap! 2 Jus Jeruk Segar sudah aku masukin ke keranjang ya! 🍊 Ada lagi yang mau dipesan? [[ACTION:add_to_cart:Jus Jeruk Segar:2:]]"
 
-    // Prepare messages for AI (limit to last 10 for context)
+User: "Aku alergi kacang, jangan pake kacang ya"
+AI: "Noted! Aku tambahin catatan 'tidak pakai kacang' ke pesanan kamu ya, biar koki tau. 👍 [[ACTION:update_notes:Jus Jeruk Segar:2:Tidak pakai kacang - ALERGI]]"`;
+
     const aiMessages = [
       { role: "system", content: systemPrompt },
       ...messages.slice(-10),
@@ -261,7 +347,6 @@ AI: "Mantap! 💪 Coba Salad Garden Bowl, sehat dan segar. Atau Grilled Salmon b
 
     console.log("Calling AI gateway with", aiMessages.length, "messages");
 
-    // Call Lovable AI Gateway
     const aiResponse = await fetch(
       "https://ai.gateway.lovable.dev/v1/chat/completions",
       {
@@ -302,7 +387,6 @@ AI: "Mantap! 💪 Coba Salad Garden Bowl, sehat dan segar. Atau Grilled Salmon b
         );
       }
       
-      // Generic error - don't leak internal details
       return new Response(
         JSON.stringify({ 
           error: "Service error",
@@ -313,18 +397,29 @@ AI: "Mantap! 💪 Coba Salad Garden Bowl, sehat dan segar. Atau Grilled Salmon b
     }
 
     const aiData = await aiResponse.json();
-    const assistantMessage = aiData.choices?.[0]?.message?.content || 
+    const rawMessage = aiData.choices?.[0]?.message?.content || 
       "Maaf, aku lagi loading. Coba tanya lagi ya! 🙏";
 
-    console.log("AI response received:", assistantMessage.substring(0, 100));
+    // Parse actions from AI response
+    const menuItemsForParsing = menuItems?.map((item: Record<string, unknown>) => ({
+      id: item.id as string,
+      name: item.name as string,
+    })) || [];
+    
+    const actions = parseAIActions(rawMessage, menuItemsForParsing);
+    const cleanMessage = cleanMessageFromActions(rawMessage);
+
+    console.log("AI response:", cleanMessage.substring(0, 100), "Actions:", actions.length);
 
     return new Response(
-      JSON.stringify({ message: assistantMessage }),
+      JSON.stringify({ 
+        message: cleanMessage,
+        actions: actions.length > 0 ? actions : undefined,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
     console.error("Error in restaurant-ai function:", error);
-    // Return generic error message - never leak internal error details
     return new Response(
       JSON.stringify({ 
         error: "Internal error",
