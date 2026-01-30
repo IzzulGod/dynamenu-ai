@@ -3,8 +3,96 @@ import { createClient } from "@supabase/supabase-js";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version, x-session-id",
 };
+
+// Input validation schema (manual implementation for Deno compatibility)
+interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
+interface RequestPayload {
+  sessionId: string;
+  tableId: string | null;
+  messages: ChatMessage[];
+}
+
+function validateSessionId(sessionId: unknown): string {
+  if (typeof sessionId !== 'string') {
+    throw new Error('sessionId must be a string');
+  }
+  if (sessionId.length < 10 || sessionId.length > 100) {
+    throw new Error('sessionId must be between 10 and 100 characters');
+  }
+  // Validate format: session_timestamp_randomstring
+  if (!/^session_\d+_[a-z0-9]+$/i.test(sessionId)) {
+    throw new Error('Invalid sessionId format');
+  }
+  return sessionId;
+}
+
+function validateTableId(tableId: unknown): string | null {
+  if (tableId === null || tableId === undefined) {
+    return null;
+  }
+  if (typeof tableId !== 'string') {
+    throw new Error('tableId must be a string or null');
+  }
+  // UUID format validation
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tableId)) {
+    throw new Error('tableId must be a valid UUID');
+  }
+  return tableId;
+}
+
+function validateMessages(messages: unknown): ChatMessage[] {
+  if (!Array.isArray(messages)) {
+    throw new Error('messages must be an array');
+  }
+  if (messages.length < 1) {
+    throw new Error('messages must have at least 1 item');
+  }
+  if (messages.length > 50) {
+    throw new Error('messages cannot exceed 50 items');
+  }
+  
+  return messages.map((msg, index) => {
+    if (typeof msg !== 'object' || msg === null) {
+      throw new Error(`messages[${index}] must be an object`);
+    }
+    
+    const { role, content } = msg as { role?: unknown; content?: unknown };
+    
+    if (!['user', 'assistant', 'system'].includes(role as string)) {
+      throw new Error(`messages[${index}].role must be 'user', 'assistant', or 'system'`);
+    }
+    
+    if (typeof content !== 'string') {
+      throw new Error(`messages[${index}].content must be a string`);
+    }
+    
+    if (content.length > 2000) {
+      throw new Error(`messages[${index}].content exceeds 2000 character limit`);
+    }
+    
+    return { role: role as ChatMessage['role'], content: content.slice(0, 2000) };
+  });
+}
+
+function validateRequest(data: unknown): RequestPayload {
+  if (typeof data !== 'object' || data === null) {
+    throw new Error('Request body must be an object');
+  }
+  
+  const { sessionId, tableId, messages } = data as Record<string, unknown>;
+  
+  return {
+    sessionId: validateSessionId(sessionId),
+    tableId: validateTableId(tableId),
+    messages: validateMessages(messages),
+  };
+}
 
 Deno.serve(async (req) => {
   // Handle CORS preflight
@@ -16,17 +104,52 @@ Deno.serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       console.error("LOVABLE_API_KEY is not configured");
-      throw new Error("AI service not configured");
+      return new Response(
+        JSON.stringify({ 
+          error: "Service unavailable",
+          message: "Maaf, ada kendala teknis. Silakan lihat menu manual dulu ya!"
+        }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
+    // Parse and validate request body
+    let rawData: unknown;
+    try {
+      rawData = await req.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ 
+          error: "Invalid JSON",
+          message: "Maaf, ada masalah dengan permintaan. Coba lagi ya!"
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Validate input
+    let validatedData: RequestPayload;
+    try {
+      validatedData = validateRequest(rawData);
+    } catch (validationError) {
+      console.error("Validation error:", validationError);
+      return new Response(
+        JSON.stringify({ 
+          error: "Invalid input",
+          message: "Maaf, ada masalah dengan data yang dikirim. Coba refresh halaman ya!"
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const { messages, sessionId, tableId } = validatedData;
+
+    console.log("Validated request:", { sessionId, tableId, messageCount: messages.length });
+
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-    const { messages, sessionId, tableId } = await req.json();
-
-    console.log("Received request:", { sessionId, tableId, messageCount: messages?.length });
 
     // Fetch menu items for context
     const { data: menuItems, error: menuError } = await supabase
@@ -51,8 +174,14 @@ Deno.serve(async (req) => {
       console.error("Error fetching menu:", menuError);
     }
 
-    // Fetch current cart/orders for this session
-    const { data: sessionOrders, error: ordersError } = await supabase
+    // Fetch current cart/orders for this session using service role to bypass RLS
+    // Note: We use service role here because we validated the sessionId above
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const supabaseAdmin = SUPABASE_SERVICE_ROLE_KEY 
+      ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+      : supabase;
+
+    const { data: sessionOrders, error: ordersError } = await supabaseAdmin
       .from("orders")
       .select(`
         id,
@@ -73,22 +202,22 @@ Deno.serve(async (req) => {
     }
 
     // Build menu context
-    const menuContext = menuItems?.map((item: any) => ({
+    const menuContext = menuItems?.map((item: Record<string, unknown>) => ({
       name: item.name,
       description: item.description,
-      price: `Rp${item.price.toLocaleString('id-ID')}`,
-      category: item.menu_categories?.name || 'Lainnya',
-      tags: item.tags?.join(', ') || '',
+      price: `Rp${(item.price as number).toLocaleString('id-ID')}`,
+      category: (item.menu_categories as Record<string, unknown>)?.name || 'Lainnya',
+      tags: (item.tags as string[])?.join(', ') || '',
       recommended: item.is_recommended,
       prepTime: `${item.preparation_time} menit`,
     })) || [];
 
     // Build order context
-    const orderContext = sessionOrders?.map((order: any) => ({
+    const orderContext = sessionOrders?.map((order: Record<string, unknown>) => ({
       status: order.status,
-      total: `Rp${order.total_amount.toLocaleString('id-ID')}`,
-      items: order.order_items?.map((oi: any) => 
-        `${oi.quantity}x ${oi.menu_items?.name || 'Item'}`
+      total: `Rp${(order.total_amount as number).toLocaleString('id-ID')}`,
+      items: (order.order_items as Array<Record<string, unknown>>)?.map((oi) => 
+        `${oi.quantity}x ${(oi.menu_items as Record<string, unknown>)?.name || 'Item'}`
       ).join(', ') || 'Kosong',
     })) || [];
 
@@ -124,10 +253,10 @@ AI: "Ada dong! 🍊 Jus Jeruk Segar (Rp25.000) fresh banget, atau Smoothie Berry
 User: "Aku lagi diet"
 AI: "Mantap! 💪 Coba Salad Garden Bowl, sehat dan segar. Atau Grilled Salmon buat protein tinggi. Keduanya recommended lho!"`;
 
-    // Prepare messages for AI
+    // Prepare messages for AI (limit to last 10 for context)
     const aiMessages = [
       { role: "system", content: systemPrompt },
-      ...messages.slice(-10), // Last 10 messages for context
+      ...messages.slice(-10),
     ];
 
     console.log("Calling AI gateway with", aiMessages.length, "messages");
@@ -157,7 +286,7 @@ AI: "Mantap! 💪 Coba Salad Garden Bowl, sehat dan segar. Atau Grilled Salmon b
       if (aiResponse.status === 429) {
         return new Response(
           JSON.stringify({ 
-            error: "Terlalu banyak permintaan, coba lagi nanti",
+            error: "Rate limit exceeded",
             message: "Maaf, aku lagi sibuk banget. Coba lagi beberapa saat ya! 😅" 
           }),
           { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -166,13 +295,21 @@ AI: "Mantap! 💪 Coba Salad Garden Bowl, sehat dan segar. Atau Grilled Salmon b
       if (aiResponse.status === 402) {
         return new Response(
           JSON.stringify({ 
-            error: "AI credits habis",
+            error: "Service unavailable",
             message: "Maaf, ada kendala teknis. Bisa lihat menu manual dulu ya!" 
           }),
           { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      throw new Error(`AI gateway error: ${aiResponse.status}`);
+      
+      // Generic error - don't leak internal details
+      return new Response(
+        JSON.stringify({ 
+          error: "Service error",
+          message: "Waduh, ada masalah teknis nih. Coba lagi ya, atau langsung pilih dari menu! 😊"
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const aiData = await aiResponse.json();
@@ -187,9 +324,10 @@ AI: "Mantap! 💪 Coba Salad Garden Bowl, sehat dan segar. Atau Grilled Salmon b
     );
   } catch (error) {
     console.error("Error in restaurant-ai function:", error);
+    // Return generic error message - never leak internal error details
     return new Response(
       JSON.stringify({ 
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "Internal error",
         message: "Waduh, ada masalah teknis nih. Coba lagi ya, atau langsung pilih dari menu! 😊"
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
