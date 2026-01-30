@@ -4,6 +4,32 @@ import { ChatMessage } from '@/types/restaurant';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
+function dedupeConsecutiveMessages(input: ChatMessage[]) {
+  const out: ChatMessage[] = [];
+  for (const msg of input) {
+    const prev = out[out.length - 1];
+    if (!prev) {
+      out.push(msg);
+      continue;
+    }
+
+    const sameRole = prev.role === msg.role;
+    const sameContent = prev.content === msg.content;
+
+    if (sameRole && sameContent) {
+      const prevTs = prev.created_at ? Date.parse(prev.created_at) : NaN;
+      const msgTs = msg.created_at ? Date.parse(msg.created_at) : NaN;
+      const diff = Number.isFinite(prevTs) && Number.isFinite(msgTs) ? Math.abs(msgTs - prevTs) : 0;
+
+      // If duplicates happen within 10s, treat as spam/duplicate and hide the later one.
+      if (diff <= 10_000) continue;
+    }
+
+    out.push(msg);
+  }
+  return out;
+}
+
 export function useChat(sessionId: string, tableId: string | null) {
   const [isLoading, setIsLoading] = useState(false);
   const queryClient = useQueryClient();
@@ -20,7 +46,7 @@ export function useChat(sessionId: string, tableId: string | null) {
         .order('created_at', { ascending: true });
 
       if (error) throw error;
-      return data as ChatMessage[];
+      return dedupeConsecutiveMessages((data as ChatMessage[]) ?? []);
     },
     enabled: !!sessionId,
   });
