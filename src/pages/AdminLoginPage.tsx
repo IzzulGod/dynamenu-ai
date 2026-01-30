@@ -54,45 +54,18 @@ export default function AdminLoginPage() {
 
       toast.success('Login berhasil!');
       navigate('/admin/kitchen');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Login error:', error);
-      toast.error(error.message || 'Login gagal');
+      const errorMessage = error instanceof Error ? error.message : 'Login gagal';
+      toast.error(errorMessage);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleSignUp = async () => {
-    if (!email || !password) {
-      toast.error('Mohon isi email dan password');
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/admin/kitchen`,
-        },
-      });
-
-      if (error) throw error;
-
-      toast.success('Registrasi berhasil! Silakan login.');
-    } catch (error: any) {
-      console.error('Signup error:', error);
-      if (error.message?.includes('already registered')) {
-        toast.error('Email sudah terdaftar');
-      } else {
-        toast.error(error.message || 'Registrasi gagal');
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // Public registration has been disabled for security reasons.
+  // Staff accounts should be created by an admin through the database
+  // or a dedicated admin management interface.
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-6">
@@ -145,26 +118,21 @@ export default function AdminLoginPage() {
                 </div>
               </div>
 
-              <div className="flex gap-3">
-                <Button type="submit" className="flex-1" disabled={isLoading}>
-                  {isLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : (
-                    <LogIn className="w-4 h-4 mr-2" />
-                  )}
-                  Login
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleSignUp}
-                  disabled={isLoading}
-                  className="flex-1"
-                >
-                  Daftar
-                </Button>
-              </div>
+              <Button type="submit" className="w-full" disabled={isLoading}>
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                ) : (
+                  <LogIn className="w-4 h-4 mr-2" />
+                )}
+                Login
+              </Button>
             </form>
+            
+            <p className="mt-4 text-xs text-center text-muted-foreground">
+              Hanya staff terdaftar yang dapat mengakses dashboard.
+              <br />
+              Hubungi admin untuk mendapatkan akses.
+            </p>
           </CardContent>
         </Card>
       </motion.div>

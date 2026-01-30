@@ -321,7 +321,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_staff_role: {
+        Args: {
+          required_role: Database["public"]["Enums"]["staff_role"]
+          user_uuid: string
+        }
+        Returns: boolean
+      }
+      is_active_staff: { Args: { user_uuid: string }; Returns: boolean }
     }
     Enums: {
       order_status:

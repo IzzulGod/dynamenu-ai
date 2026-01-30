@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ChefHat, Clock, CheckCircle, Truck, LogOut, 
-  RefreshCw, Bell, Coffee, Loader2 
+  RefreshCw, Bell, Coffee, Loader2, ShieldAlert
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -27,18 +27,42 @@ const statusConfig = {
 export default function KitchenDashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'pending' | 'preparing' | 'ready'>('pending');
+  const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
+  const [staffName, setStaffName] = useState<string>('');
   const { data: allOrders = [], isLoading, refetch } = useAllOrders();
   const updateStatus = useUpdateOrderStatus();
 
-  // Check auth
+  // Check auth AND staff authorization
   useEffect(() => {
-    const checkSession = async () => {
+    const checkAccess = async () => {
       const { data: { session } } = await supabase.auth.getSession();
+      
       if (!session) {
         navigate('/admin');
+        return;
       }
+      
+      // Check if user is in staff_profiles and is active
+      const { data: profile, error } = await supabase
+        .from('staff_profiles')
+        .select('id, name, role, is_active')
+        .eq('user_id', session.user.id)
+        .eq('is_active', true)
+        .single();
+      
+      if (error || !profile) {
+        console.error('Staff access check failed:', error);
+        setIsAuthorized(false);
+        toast.error('Akses ditolak: Anda bukan staff yang terdaftar');
+        return;
+      }
+      
+      // User is authorized staff
+      setIsAuthorized(true);
+      setStaffName(profile.name);
     };
-    checkSession();
+    
+    checkAccess();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!session) {
@@ -81,6 +105,41 @@ export default function KitchenDashboard() {
       minimumFractionDigits: 0,
     }).format(price);
   };
+
+  // Show unauthorized screen
+  if (isAuthorized === false) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-6">
+        <Card className="max-w-md w-full">
+          <CardContent className="pt-6">
+            <div className="text-center space-y-4">
+              <div className="w-16 h-16 mx-auto bg-destructive/10 rounded-full flex items-center justify-center">
+                <ShieldAlert className="w-8 h-8 text-destructive" />
+              </div>
+              <h2 className="text-xl font-bold text-destructive">Akses Ditolak</h2>
+              <p className="text-muted-foreground">
+                Anda tidak memiliki akses ke dashboard dapur. 
+                Hanya staff yang terdaftar yang dapat mengakses halaman ini.
+              </p>
+              <Button onClick={handleLogout} variant="outline" className="w-full">
+                <LogOut className="w-4 h-4 mr-2" />
+                Logout
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Show loading while checking authorization
+  if (isAuthorized === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   const OrderCard = ({ order }: { order: OrderWithItems }) => {
     const status = statusConfig[order.status];
@@ -202,7 +261,7 @@ export default function KitchenDashboard() {
               <div>
                 <h1 className="font-bold text-foreground">Dashboard Dapur</h1>
                 <p className="text-xs text-muted-foreground">
-                  {allOrders.length} pesanan aktif
+                  {staffName && `👋 ${staffName} • `}{allOrders.length} pesanan aktif
                 </p>
               </div>
             </div>
