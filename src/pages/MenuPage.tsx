@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { MessageCircle, Grid, AlertTriangle, MapPin } from 'lucide-react';
@@ -45,9 +45,11 @@ export default function MenuPage() {
     }
   }, [table, tableId, setTable]);
 
-  // Send initial greeting
+  // Send initial greeting - use ref to prevent duplicate sends
+  const greetingSentRef = useRef(false);
   useEffect(() => {
-    if (table && messages.length === 0 && !chatLoading) {
+    if (table && messages.length === 0 && !chatLoading && !greetingSentRef.current) {
+      greetingSentRef.current = true;
       sendMessage(`Halo! Aku baru sampai di meja ${table.table_number}`).catch(console.error);
     }
   }, [table, messages.length, sendMessage, chatLoading]);
