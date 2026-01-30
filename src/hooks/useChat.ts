@@ -1,11 +1,14 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { ChatMessage } from '@/types/restaurant';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 
 export function useChat(sessionId: string, tableId: string | null) {
   const [isLoading, setIsLoading] = useState(false);
   const queryClient = useQueryClient();
+  const lastRequestTimeRef = useRef<number>(0);
+  const requestInProgressRef = useRef<boolean>(false);
 
   const { data: messages = [] } = useQuery({
     queryKey: ['chat-messages', sessionId],
@@ -24,6 +27,22 @@ export function useChat(sessionId: string, tableId: string | null) {
 
   const sendMessage = useCallback(
     async (content: string): Promise<string> => {
+      // Prevent duplicate requests
+      if (requestInProgressRef.current) {
+        console.log('Request already in progress, skipping');
+        return 'Mohon tunggu sebentar...';
+      }
+
+      // Rate limit client-side: minimum 2 seconds between requests
+      const now = Date.now();
+      const timeSinceLastRequest = now - lastRequestTimeRef.current;
+      if (timeSinceLastRequest < 2000) {
+        toast.info('Tunggu sebentar ya, jangan terlalu cepat! 😊');
+        return 'Mohon tunggu sebentar...';
+      }
+
+      requestInProgressRef.current = true;
+      lastRequestTimeRef.current = now;
       setIsLoading(true);
 
       try {
@@ -47,7 +66,14 @@ export function useChat(sessionId: string, tableId: string | null) {
           },
         });
 
-        if (response.error) throw response.error;
+        if (response.error) {
+          // Handle rate limit specifically
+          if (response.error.message?.includes('429') || response.error.message?.includes('rate')) {
+            toast.error('AI sedang sibuk, coba lagi dalam beberapa detik');
+            return 'Maaf, aku lagi sibuk. Coba lagi sebentar ya! 😅';
+          }
+          throw response.error;
+        }
 
         const assistantMessage = response.data?.message || 'Maaf, ada kendala. Coba lagi ya!';
 
@@ -65,9 +91,11 @@ export function useChat(sessionId: string, tableId: string | null) {
         return assistantMessage;
       } catch (error) {
         console.error('Chat error:', error);
+        toast.error('Gagal mengirim pesan. Coba lagi nanti.');
         throw error;
       } finally {
         setIsLoading(false);
+        requestInProgressRef.current = false;
       }
     },
     [sessionId, tableId, messages, queryClient]
