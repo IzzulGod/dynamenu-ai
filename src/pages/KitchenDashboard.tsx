@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ChefHat, Clock, CheckCircle, Truck, LogOut, 
-  RefreshCw, Bell, Coffee, Loader2, ShieldAlert
+  RefreshCw, Bell, Coffee, Loader2, ShieldAlert, UtensilsCrossed
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -29,6 +29,7 @@ export default function KitchenDashboard() {
   const [activeTab, setActiveTab] = useState<'pending' | 'preparing' | 'ready'>('pending');
   const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
   const [staffName, setStaffName] = useState<string>('');
+  const [staffRole, setStaffRole] = useState<string>('');
   const { data: allOrders = [], isLoading, refetch } = useAllOrders();
   const updateStatus = useUpdateOrderStatus();
 
@@ -60,6 +61,7 @@ export default function KitchenDashboard() {
       // User is authorized staff
       setIsAuthorized(true);
       setStaffName(profile.name);
+      setStaffRole(profile.role);
     };
     
     checkAccess();
@@ -266,6 +268,15 @@ export default function KitchenDashboard() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {staffRole === 'admin' && (
+                <Button
+                  variant="outline"
+                  onClick={() => navigate('/admin/menu')}
+                >
+                  <UtensilsCrossed className="w-4 h-4 mr-2" />
+                  Kelola Menu
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="icon"
