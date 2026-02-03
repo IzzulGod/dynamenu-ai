@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { MessageCircle, Grid, AlertTriangle, MapPin } from 'lucide-react';
+import { MessageCircle, Grid, AlertTriangle, MapPin, ClipboardList } from 'lucide-react';
 import { useTable } from '@/hooks/useTable';
 import { useCategories, useMenuItems } from '@/hooks/useMenu';
 import { useCart } from '@/hooks/useCart';
@@ -13,6 +13,7 @@ import { CategoryTabs } from '@/components/menu/CategoryTabs';
 import { CartSheet } from '@/components/cart/CartSheet';
 import { AIChat } from '@/components/chat/AIChat';
 import { PaymentDialog } from '@/components/payment/PaymentDialog';
+import { OrderHistory } from '@/components/orders/OrderHistory';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -23,7 +24,7 @@ export default function MenuPage() {
   const tableNumber = searchParams.get('table') ? parseInt(searchParams.get('table')!) : null;
   
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'menu' | 'chat'>('menu');
+  const [activeTab, setActiveTab] = useState<'menu' | 'chat' | 'orders'>('menu');
   const [showPayment, setShowPayment] = useState(false);
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
   
@@ -166,14 +167,18 @@ export default function MenuPage() {
                 <p className="text-sm text-muted-foreground">Meja {table.table_number}</p>
               )}
             </div>
-            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'menu' | 'chat')}>
-              <TabsList className="grid grid-cols-2 w-44">
-                <TabsTrigger value="menu" className="gap-1">
-                  <Grid className="w-4 h-4" />
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'menu' | 'chat' | 'orders')}>
+              <TabsList className="grid grid-cols-3 w-56">
+                <TabsTrigger value="menu" className="gap-1 text-xs px-2">
+                  <Grid className="w-3 h-3" />
                   Menu
                 </TabsTrigger>
-                <TabsTrigger value="chat" className="gap-1">
-                  <MessageCircle className="w-4 h-4" />
+                <TabsTrigger value="orders" className="gap-1 text-xs px-2">
+                  <ClipboardList className="w-3 h-3" />
+                  Pesanan
+                </TabsTrigger>
+                <TabsTrigger value="chat" className="gap-1 text-xs px-2">
+                  <MessageCircle className="w-3 h-3" />
                   Chat
                 </TabsTrigger>
               </TabsList>
@@ -228,6 +233,8 @@ export default function MenuPage() {
               </div>
             )}
           </>
+        ) : activeTab === 'orders' ? (
+          <OrderHistory />
         ) : (
           <div className="h-[calc(100vh-200px)]">
             <AIChat
