@@ -39,7 +39,6 @@ interface UseChatOptions {
 export function useChat(sessionId: string, tableId: string | null, options: UseChatOptions = {}) {
   const [isLoading, setIsLoading] = useState(false);
   const [lastActions, setLastActions] = useState<AIAction[]>([]);
-  const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const lastRequestTimeRef = useRef<number>(0);
   const requestInProgressRef = useRef<boolean>(false);
@@ -149,9 +148,6 @@ export function useChat(sessionId: string, tableId: string | null, options: UseC
 
       requestInProgressRef.current = true;
       lastRequestTimeRef.current = now;
-      
-      // Show user message immediately in UI
-      setPendingUserMessage(content);
       setIsLoading(true);
 
       try {
@@ -218,7 +214,6 @@ export function useChat(sessionId: string, tableId: string | null, options: UseC
         throw error;
       } finally {
         setIsLoading(false);
-        setPendingUserMessage(null);
         requestInProgressRef.current = false;
       }
     },
@@ -230,6 +225,5 @@ export function useChat(sessionId: string, tableId: string | null, options: UseC
     sendMessage,
     isLoading,
     lastActions,
-    pendingUserMessage,
   };
 }

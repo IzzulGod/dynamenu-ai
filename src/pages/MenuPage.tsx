@@ -35,7 +35,7 @@ export default function MenuPage() {
   const { data: menuItems = [], isLoading: menuLoading } = useMenuItems(selectedCategory ?? undefined);
   
   const { items: cartItems, getTotalAmount, clearCart, setTable, tableId } = useCart();
-  const { messages, sendMessage, isLoading: chatLoading, pendingUserMessage } = useChat(sessionId, table?.id ?? null, {
+  const { messages, sendMessage, isLoading: chatLoading } = useChat(sessionId, table?.id ?? null, {
     menuItems,
   });
   
@@ -239,7 +239,6 @@ export default function MenuPage() {
           <div className="h-[calc(100vh-200px)]">
             <AIChat
               messages={messages}
-              pendingUserMessage={pendingUserMessage}
               onSendMessage={sendMessage}
               isLoading={chatLoading}
               tableNumber={table?.table_number ?? null}
