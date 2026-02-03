@@ -34,25 +34,27 @@ export function PaymentDialog({
   };
 
   const handlePayment = async (method: 'qris' | 'cash') => {
+    if (method === 'cash') {
+      // Cash: show instruction screen, don't mark as paid yet
+      setStep('cash');
+      return;
+    }
+
+    // QRIS flow
     setIsProcessing(true);
-    
     try {
-      if (method === 'qris') {
-        setStep('qris');
-        // Simulate QRIS payment delay
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-      } else {
-        setStep('cash');
-      }
+      setStep('qris');
+      // Simulate QRIS payment delay
+      await new Promise((resolve) => setTimeout(resolve, 3000));
 
       await updatePayment.mutateAsync({
         orderId,
-        paymentMethod: method,
-        paymentStatus: method === 'qris' ? 'paid' : 'pending',
+        paymentMethod: 'qris',
+        paymentStatus: 'paid',
       });
 
       setStep('success');
-      toast.success('Pesanan berhasil!');
+      toast.success('Pembayaran QRIS berhasil!');
       setTimeout(() => {
         onSuccess();
         onOpenChange(false);
@@ -163,13 +165,16 @@ export function PaymentDialog({
               </div>
               <p className="font-semibold text-lg">Pembayaran Tunai</p>
               <p className="text-muted-foreground">
-                Silakan bayar {formatPrice(totalAmount)} ke waiter
+                Silakan bayar {formatPrice(totalAmount)} ke waiter.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Tekan tombol di bawah <strong>setelah waiter konfirmasi</strong> pembayaran kamu.
               </p>
               <Button onClick={handleCashConfirm} disabled={isProcessing} className="w-full">
                 {isProcessing ? (
                   <Loader2 className="w-4 h-4 animate-spin mr-2" />
                 ) : null}
-                Konfirmasi Pembayaran
+                Waiter Sudah Konfirmasi
               </Button>
             </motion.div>
           )}
