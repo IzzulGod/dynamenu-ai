@@ -1,10 +1,13 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Bot, User, Sparkles, Loader2, ShoppingCart, FileText } from 'lucide-react';
+import { Send, Bot, User, Sparkles, Loader2, ShoppingCart, FileText, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ChatMessage } from '@/types/restaurant';
 import { cn } from '@/lib/utils';
+import { useVoiceInput } from '@/hooks/useVoiceInput';
+import { useTTS } from '@/hooks/useTTS';
+import { toast } from 'sonner';
 
 interface AIChatProps {
   messages: ChatMessage[];
@@ -15,8 +18,33 @@ interface AIChatProps {
 
 export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AIChatProps) {
   const [input, setInput] = useState('');
+  const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // TTS hook
+  const { speak, stop: stopTTS, isPlaying, isLoading: ttsLoading, isEnabled: ttsEnabled, setEnabled: setTTSEnabled } = useTTS();
+
+  // Voice input hook
+  const { isListening, isSupported: sttSupported, startListening, stopListening, transcript } = useVoiceInput({
+    onResult: (result) => {
+      setInput(result);
+      // Auto-send after voice input
+      if (result.trim()) {
+        handleSendMessage(result.trim());
+      }
+    },
+    onError: (error) => {
+      toast.error(error);
+    },
+  });
+
+  // Update input as user speaks
+  useEffect(() => {
+    if (isListening && transcript) {
+      setInput(transcript);
+    }
+  }, [isListening, transcript]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -24,15 +52,57 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, pendingUserMessage]);
+
+  // Play TTS for new AI messages
+  const lastMessageRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!ttsEnabled || messages.length === 0) return;
+    
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage.role === 'assistant' && lastMessage.content !== lastMessageRef.current) {
+      lastMessageRef.current = lastMessage.content;
+      speak(lastMessage.content);
+    }
+  }, [messages, ttsEnabled, speak]);
+
+  const handleSendMessage = useCallback(async (messageText: string) => {
+    if (!messageText.trim() || isLoading) return;
+    
+    // Show user message immediately in UI
+    setPendingUserMessage(messageText);
+    setInput('');
+    
+    try {
+      const response = await onSendMessage(messageText);
+      // Clear pending message after server confirms
+      setPendingUserMessage(null);
+    } catch (error) {
+      // Keep pending message visible on error
+      setPendingUserMessage(null);
+      setInput(messageText); // Restore input on error
+    }
+  }, [isLoading, onSendMessage]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    await handleSendMessage(input.trim());
+  };
 
-    const message = input.trim();
-    setInput('');
-    await onSendMessage(message);
+  const toggleVoiceInput = () => {
+    if (isListening) {
+      stopListening();
+    } else {
+      startListening();
+    }
+  };
+
+  const toggleTTS = () => {
+    if (isPlaying) {
+      stopTTS();
+    }
+    setTTSEnabled(!ttsEnabled);
+    toast.success(ttsEnabled ? 'Suara AI dimatikan' : 'Suara AI diaktifkan');
   };
 
   const quickSuggestions = [
@@ -47,6 +117,9 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
     { icon: FileText, text: 'Tambah catatan: tidak pedas' },
   ];
 
+  // Combine server messages with pending user message
+  const displayMessages = [...messages];
+  
   return (
     <div className="flex flex-col h-full bg-card rounded-2xl border border-border overflow-hidden">
       {/* Header */}
@@ -55,19 +128,38 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
           <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-primary-foreground">
             <Bot className="w-5 h-5" />
           </div>
-          <div>
+          <div className="flex-1">
             <h3 className="font-semibold text-foreground">Asisten Restoran AI</h3>
             <p className="text-xs text-muted-foreground">
               {tableNumber ? `Meja ${tableNumber}` : 'Siap membantu!'} • Bisa tambah ke keranjang! 🛒
             </p>
           </div>
-          <Sparkles className="w-5 h-5 text-primary ml-auto animate-pulse" />
+          
+          {/* TTS Toggle */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className={cn(
+              "w-8 h-8 rounded-full transition-colors",
+              ttsEnabled ? "text-primary bg-primary/10" : "text-muted-foreground"
+            )}
+            onClick={toggleTTS}
+            title={ttsEnabled ? "Matikan suara AI" : "Aktifkan suara AI"}
+          >
+            {ttsEnabled ? (
+              <Volume2 className={cn("w-4 h-4", isPlaying && "animate-pulse")} />
+            ) : (
+              <VolumeX className="w-4 h-4" />
+            )}
+          </Button>
+          
+          <Sparkles className="w-5 h-5 text-primary animate-pulse" />
         </div>
       </div>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 && (
+        {messages.length === 0 && !pendingUserMessage && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -119,9 +211,10 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
         )}
 
         <AnimatePresence mode="popLayout">
-          {messages.map((message, index) => (
+          {/* Render confirmed messages from server */}
+          {displayMessages.map((message, index) => (
             <motion.div
-              key={message.id || index}
+              key={message.id || `msg-${index}`}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
@@ -154,12 +247,30 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
               )}
             </motion.div>
           ))}
+
+          {/* Show pending user message immediately */}
+          {pendingUserMessage && (
+            <motion.div
+              key="pending-user-message"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex gap-3 justify-end"
+            >
+              <div className="max-w-[80%] whitespace-pre-wrap chat-bubble-user">
+                {pendingUserMessage}
+              </div>
+              <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center shrink-0">
+                <User className="w-4 h-4 text-primary-foreground" />
+              </div>
+            </motion.div>
+          )}
         </AnimatePresence>
 
+        {/* AI Typing indicator - shows AFTER user message */}
         {isLoading && (
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
             className="flex gap-3"
           >
             <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center">
@@ -178,13 +289,37 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
       {/* Input */}
       <form onSubmit={handleSubmit} className="p-4 border-t border-border">
         <div className="flex gap-2">
+          {/* Voice Input Button */}
+          {sttSupported && (
+            <Button
+              type="button"
+              variant={isListening ? "default" : "outline"}
+              size="icon"
+              className={cn(
+                "w-12 h-12 rounded-xl shrink-0 transition-all",
+                isListening && "bg-destructive hover:bg-destructive/90 animate-pulse"
+              )}
+              onClick={toggleVoiceInput}
+              disabled={isLoading}
+            >
+              {isListening ? (
+                <MicOff className="w-5 h-5" />
+              ) : (
+                <Mic className="w-5 h-5" />
+              )}
+            </Button>
+          )}
+          
           <Input
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ketik pesan, minta rekomendasi, atau suruh tambah ke keranjang..."
-            className="flex-1 h-12 rounded-xl"
-            disabled={isLoading}
+            placeholder={isListening ? "Sedang mendengarkan..." : "Ketik atau tekan mikrofon untuk bicara..."}
+            className={cn(
+              "flex-1 h-12 rounded-xl transition-all",
+              isListening && "border-destructive ring-2 ring-destructive/20"
+            )}
+            disabled={isLoading || isListening}
           />
           <Button
             type="submit"
@@ -195,6 +330,17 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
             <Send className="w-5 h-5" />
           </Button>
         </div>
+        
+        {/* Voice input hint */}
+        {isListening && (
+          <motion.p
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-xs text-center text-destructive mt-2"
+          >
+            🎤 Bicara sekarang... Tekan tombol mikrofon lagi untuk berhenti
+          </motion.p>
+        )}
       </form>
     </div>
   );
