@@ -54,17 +54,31 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
     scrollToBottom();
   }, [messages, pendingUserMessage]);
 
-  // Play TTS for new AI messages
-  const lastMessageRef = useRef<string | null>(null);
+  // Play TTS for new AI messages - use ref to track and prevent double play
+  const lastMessageIdRef = useRef<string | null>(null);
+  const ttsEnabledRef = useRef(ttsEnabled);
+  
+  // Keep ref in sync
   useEffect(() => {
-    if (!ttsEnabled || messages.length === 0) return;
+    ttsEnabledRef.current = ttsEnabled;
+  }, [ttsEnabled]);
+  
+  useEffect(() => {
+    if (messages.length === 0) return;
     
     const lastMessage = messages[messages.length - 1];
-    if (lastMessage.role === 'assistant' && lastMessage.content !== lastMessageRef.current) {
-      lastMessageRef.current = lastMessage.content;
+    
+    // Only speak if: enabled, is assistant, and not already spoken
+    if (
+      ttsEnabledRef.current && 
+      lastMessage.role === 'assistant' && 
+      lastMessage.id !== lastMessageIdRef.current
+    ) {
+      lastMessageIdRef.current = lastMessage.id || lastMessage.content;
+      // Speak immediately when message arrives
       speak(lastMessage.content);
     }
-  }, [messages, ttsEnabled, speak]);
+  }, [messages, speak]);
 
   const handleSendMessage = useCallback(async (messageText: string) => {
     if (!messageText.trim() || isLoading) return;
