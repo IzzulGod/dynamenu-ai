@@ -13,10 +13,10 @@ export function getSessionId(): string {
   let sessionId = sessionStorage.getItem(SESSION_KEY);
   
   if (!sessionId) {
-    // Generate a secure session ID
+    // Generate a cryptographically secure session ID using crypto.randomUUID()
+    const uuid = crypto.randomUUID();
     const timestamp = Date.now();
-    const randomPart = Math.random().toString(36).substring(2, 15);
-    sessionId = `session_${timestamp}_${randomPart}`;
+    sessionId = `session_${timestamp}_${uuid}`;
     sessionStorage.setItem(SESSION_KEY, sessionId);
   }
   
@@ -29,7 +29,12 @@ export function clearSession(): void {
   cachedSessionId = null;
 }
 
-// Validate session ID format
+// Validate session ID format - supports both legacy and new UUID format
 export function isValidSessionId(sessionId: string): boolean {
-  return /^session_\d+_[a-z0-9]+$/i.test(sessionId);
+  // New UUID format: session_timestamp_uuid
+  const uuidPattern = /^session_\d+_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  // Legacy format: session_timestamp_randomstring (for backward compatibility)
+  const legacyPattern = /^session_\d+_[a-z0-9]+$/i;
+  
+  return uuidPattern.test(sessionId) || legacyPattern.test(sessionId);
 }

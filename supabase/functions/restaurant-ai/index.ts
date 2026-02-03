@@ -39,10 +39,14 @@ function validateSessionId(sessionId: unknown): string {
   if (typeof sessionId !== 'string') {
     throw new Error('sessionId must be a string');
   }
-  if (sessionId.length < 10 || sessionId.length > 100) {
-    throw new Error('sessionId must be between 10 and 100 characters');
+  if (sessionId.length < 10 || sessionId.length > 150) {
+    throw new Error('sessionId must be between 10 and 150 characters');
   }
-  if (!/^session_\d+_[a-z0-9]+$/i.test(sessionId)) {
+  // Support both new UUID format and legacy format for backward compatibility
+  const uuidPattern = /^session_\d+_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const legacyPattern = /^session_\d+_[a-z0-9]+$/i;
+  
+  if (!uuidPattern.test(sessionId) && !legacyPattern.test(sessionId)) {
     throw new Error('Invalid sessionId format');
   }
   return sessionId;
@@ -160,6 +164,50 @@ function cleanMessageFromActions(content: string): string {
   return content.replace(/\[\[ACTION:[^\]]+\]\]/g, '').trim();
 }
 
+// Rate limiting configuration
+const RATE_LIMIT_REQUESTS = 15; // max requests per window
+const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute window
+
+// Server-side rate limiting using Deno KV
+async function checkRateLimit(sessionId: string): Promise<{ allowed: boolean; remaining: number }> {
+  try {
+    const kv = await Deno.openKv();
+    const key = ['rate_limit', 'restaurant_ai', sessionId];
+    const now = Date.now();
+    
+    const result = await kv.get<{ count: number; resetAt: number }>(key);
+    
+    if (!result.value || now > result.value.resetAt) {
+      // New window - reset counter
+      await kv.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS }, { 
+        expireIn: RATE_LIMIT_WINDOW_MS 
+      });
+      return { allowed: true, remaining: RATE_LIMIT_REQUESTS - 1 };
+    }
+    
+    if (result.value.count >= RATE_LIMIT_REQUESTS) {
+      // Rate limit exceeded
+      const retryAfter = Math.ceil((result.value.resetAt - now) / 1000);
+      console.warn(`Rate limit exceeded for session: ${sessionId.substring(0, 20)}..., retry after: ${retryAfter}s`);
+      return { allowed: false, remaining: 0 };
+    }
+    
+    // Increment counter
+    await kv.set(key, { 
+      count: result.value.count + 1, 
+      resetAt: result.value.resetAt 
+    }, { 
+      expireIn: result.value.resetAt - now 
+    });
+    
+    return { allowed: true, remaining: RATE_LIMIT_REQUESTS - result.value.count - 1 };
+  } catch (error) {
+    // If KV fails, log and allow request (fail open to not block legitimate users)
+    console.error('Rate limit check failed:', error);
+    return { allowed: true, remaining: -1 };
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -205,6 +253,25 @@ Deno.serve(async (req) => {
           message: "Maaf, ada masalah dengan data yang dikirim. Coba refresh halaman ya!"
         }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Server-side rate limiting check BEFORE any expensive operations
+    const rateLimitResult = await checkRateLimit(validatedData.sessionId);
+    if (!rateLimitResult.allowed) {
+      return new Response(
+        JSON.stringify({ 
+          error: "Rate limit exceeded",
+          message: "Tunggu sebentar ya, jangan terlalu cepat! Coba lagi dalam 1 menit 😊"
+        }),
+        { 
+          status: 429, 
+          headers: { 
+            ...corsHeaders, 
+            "Content-Type": "application/json",
+            "Retry-After": "60"
+          } 
+        }
       );
     }
 
