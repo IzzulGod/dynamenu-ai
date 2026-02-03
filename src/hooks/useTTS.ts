@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { getSessionId } from '@/lib/session';
 
 interface UseTTSOptions {
   voiceId?: string;
@@ -50,6 +50,9 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
     setError(null);
     
     try {
+      // Get session ID for authentication
+      const sessionId = getSessionId();
+      
       // Call the TTS edge function using fetch for binary data
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/elevenlabs-tts`,
@@ -59,6 +62,7 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
             'Content-Type': 'application/json',
             'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
             'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            'x-session-id': sessionId,
           },
           body: JSON.stringify({ text, voiceId }),
         }
@@ -66,6 +70,12 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        
+        // Handle rate limiting gracefully
+        if (response.status === 429) {
+          throw new Error(errorData.message || 'Terlalu banyak permintaan, coba lagi nanti');
+        }
+        
         throw new Error(errorData.error || `TTS request failed: ${response.status}`);
       }
 
