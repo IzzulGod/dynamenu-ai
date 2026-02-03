@@ -161,11 +161,20 @@ export default function MenuPage() {
       <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-md border-b border-border">
         <div className="container py-4">
           <div className="flex items-center justify-between mb-4">
-            <div>
-              <h1 className="text-xl font-bold text-foreground">🍽️ RestoAI</h1>
-              {table && (
-                <p className="text-sm text-muted-foreground">Meja {table.table_number}</p>
-              )}
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center overflow-hidden">
+                <img 
+                  src="/placeholder.svg" 
+                  alt="Restaurant Logo" 
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-foreground">RestoAI</h1>
+                {table && (
+                  <p className="text-sm text-muted-foreground">Meja {table.table_number}</p>
+                )}
+              </div>
             </div>
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'menu' | 'chat' | 'orders')}>
               <TabsList className="grid grid-cols-3 w-56">

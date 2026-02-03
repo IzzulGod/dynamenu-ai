@@ -21,7 +21,7 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
   
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isEnabled, setEnabled] = useState(false);
+  const [isEnabled, setEnabled] = useState(true); // TTS enabled by default
   const [error, setError] = useState<string | null>(null);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
