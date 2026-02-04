@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { CreditCard, Banknote, QrCode, CheckCircle, Loader2 } from 'lucide-react';
+import { Banknote, QrCode, CheckCircle, Loader2, Clock, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { useUpdatePayment } from '@/hooks/useOrders';
 import { toast } from 'sonner';
+import { Badge } from '@/components/ui/badge';
 
 interface PaymentDialogProps {
   open: boolean;
@@ -21,9 +22,38 @@ export function PaymentDialog({
   totalAmount,
   onSuccess,
 }: PaymentDialogProps) {
-  const [step, setStep] = useState<'select' | 'qris' | 'cash' | 'success'>('select');
+  const [step, setStep] = useState<'select' | 'qris' | 'cash-waiting' | 'success'>('select');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [qrisCountdown, setQrisCountdown] = useState(60);
   const updatePayment = useUpdatePayment();
+
+  // Reset state when dialog opens
+  useEffect(() => {
+    if (open) {
+      setStep('select');
+      setIsProcessing(false);
+      setQrisCountdown(60);
+    }
+  }, [open]);
+
+  // QRIS countdown timer
+  useEffect(() => {
+    if (step !== 'qris') return;
+    
+    const timer = setInterval(() => {
+      setQrisCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          toast.error('Waktu pembayaran QRIS habis');
+          setStep('select');
+          return 60;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [step]);
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -33,41 +63,55 @@ export function PaymentDialog({
     }).format(price);
   };
 
-  const handlePayment = async (method: 'qris' | 'cash') => {
+  const handleSelectPayment = async (method: 'qris' | 'cash') => {
     setIsProcessing(true);
     
     try {
-      if (method === 'qris') {
-        setStep('qris');
-        // Simulate QRIS payment delay
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-      } else {
-        setStep('cash');
-      }
-
+      // Set payment method to database with pending status
       await updatePayment.mutateAsync({
         orderId,
         paymentMethod: method,
-        paymentStatus: method === 'qris' ? 'paid' : 'pending',
+        paymentStatus: 'pending',
       });
 
-      setStep('success');
-      toast.success('Pesanan berhasil!');
-      setTimeout(() => {
-        onSuccess();
-        onOpenChange(false);
-        setStep('select');
-      }, 2000);
+      if (method === 'qris') {
+        setStep('qris');
+        setQrisCountdown(60);
+      } else {
+        setStep('cash-waiting');
+      }
     } catch (error) {
       console.error('Payment error:', error);
       toast.error('Gagal memproses pembayaran');
-      setStep('select');
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleCashConfirm = async () => {
+  // Simulate QRIS payment (for demo/testing)
+  const handleSimulateQRIS = async () => {
+    setIsProcessing(true);
+    try {
+      await updatePayment.mutateAsync({
+        orderId,
+        paymentMethod: 'qris',
+        paymentStatus: 'paid',
+      });
+      setStep('success');
+      toast.success('Pembayaran QRIS berhasil!');
+      setTimeout(() => {
+        onSuccess();
+        onOpenChange(false);
+      }, 2000);
+    } catch (error) {
+      toast.error('Gagal memproses pembayaran');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Simulate cash confirmation by waiter (for demo/testing)
+  const handleSimulateCashConfirm = async () => {
     setIsProcessing(true);
     try {
       await updatePayment.mutateAsync({
@@ -80,13 +124,22 @@ export function PaymentDialog({
       setTimeout(() => {
         onSuccess();
         onOpenChange(false);
-        setStep('select');
       }, 2000);
     } catch (error) {
       toast.error('Gagal mengkonfirmasi pembayaran');
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  // Customer submits order without waiting (staff will confirm later)
+  const handleSubmitCashOrder = async () => {
+    setStep('success');
+    toast.success('Pesanan dikirim! Waiter akan menghampiri untuk pembayaran.');
+    setTimeout(() => {
+      onSuccess();
+      onOpenChange(false);
+    }, 2000);
   };
 
   return (
@@ -113,7 +166,7 @@ export function PaymentDialog({
                 <Button
                   variant="outline"
                   className="h-24 flex-col gap-2"
-                  onClick={() => handlePayment('qris')}
+                  onClick={() => handleSelectPayment('qris')}
                   disabled={isProcessing}
                 >
                   <QrCode className="w-8 h-8 text-primary" />
@@ -122,7 +175,7 @@ export function PaymentDialog({
                 <Button
                   variant="outline"
                   className="h-24 flex-col gap-2"
-                  onClick={() => handlePayment('cash')}
+                  onClick={() => handleSelectPayment('cash')}
                   disabled={isProcessing}
                 >
                   <Banknote className="w-8 h-8 text-sage" />
@@ -138,39 +191,103 @@ export function PaymentDialog({
               animate={{ opacity: 1, scale: 1 }}
               className="text-center space-y-4"
             >
-              <div className="w-48 h-48 mx-auto bg-white p-4 rounded-xl border">
+              <div className="w-48 h-48 mx-auto bg-white p-4 rounded-xl border relative">
                 {/* Mock QRIS */}
                 <div className="w-full h-full bg-gradient-to-br from-primary/20 to-sage/20 rounded-lg flex items-center justify-center">
                   <QrCode className="w-24 h-24 text-foreground" />
                 </div>
               </div>
+              
               <p className="text-muted-foreground">Scan QRIS untuk membayar</p>
+              
+              {/* Countdown Timer */}
+              <div className="flex items-center justify-center gap-2">
+                <Clock className="w-4 h-4 text-muted-foreground" />
+                <span className={`font-mono ${qrisCountdown <= 10 ? 'text-destructive' : 'text-muted-foreground'}`}>
+                  {Math.floor(qrisCountdown / 60)}:{(qrisCountdown % 60).toString().padStart(2, '0')}
+                </span>
+              </div>
+
               <div className="flex items-center justify-center gap-2 text-primary">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span>Menunggu pembayaran...</span>
               </div>
+
+              {/* Demo Simulate Button */}
+              <div className="pt-4 border-t space-y-2">
+                <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                  <Sparkles className="w-3 h-3 mr-1" />
+                  Mode Demo
+                </Badge>
+                <Button 
+                  onClick={handleSimulateQRIS} 
+                  disabled={isProcessing}
+                  variant="secondary"
+                  className="w-full"
+                >
+                  {isProcessing ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : null}
+                  Simulasi: Bayar QRIS
+                </Button>
+              </div>
             </motion.div>
           )}
 
-          {step === 'cash' && (
+          {step === 'cash-waiting' && (
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               className="text-center space-y-4"
             >
-              <div className="w-24 h-24 mx-auto bg-sage-light rounded-full flex items-center justify-center">
-                <Banknote className="w-12 h-12 text-sage-dark" />
+              <div className="w-24 h-24 mx-auto bg-amber-50 rounded-full flex items-center justify-center">
+                <Banknote className="w-12 h-12 text-amber-600" />
               </div>
               <p className="font-semibold text-lg">Pembayaran Tunai</p>
               <p className="text-muted-foreground">
-                Silakan bayar {formatPrice(totalAmount)} ke waiter
+                Silakan bayar <span className="font-bold text-foreground">{formatPrice(totalAmount)}</span> ke waiter
               </p>
-              <Button onClick={handleCashConfirm} disabled={isProcessing} className="w-full">
+              
+              <div className="flex items-center justify-center gap-2 text-amber-600">
+                <Clock className="w-4 h-4" />
+                <span>Menunggu konfirmasi waiter...</span>
+              </div>
+
+              {/* Submit order button - customer confirms they'll pay */}
+              <Button 
+                onClick={handleSubmitCashOrder} 
+                disabled={isProcessing} 
+                className="w-full"
+              >
                 {isProcessing ? (
                   <Loader2 className="w-4 h-4 animate-spin mr-2" />
                 ) : null}
-                Konfirmasi Pembayaran
+                Kirim Pesanan
               </Button>
+              
+              <p className="text-xs text-muted-foreground">
+                Pesanan akan diproses setelah waiter mengkonfirmasi pembayaran
+              </p>
+
+              {/* Demo Simulate Button */}
+              <div className="pt-4 border-t space-y-2">
+                <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                  <Sparkles className="w-3 h-3 mr-1" />
+                  Mode Demo
+                </Badge>
+                <Button 
+                  onClick={handleSimulateCashConfirm} 
+                  disabled={isProcessing}
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                >
+                  {isProcessing ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : null}
+                  Simulasi: Waiter Konfirmasi
+                </Button>
+              </div>
             </motion.div>
           )}
 
@@ -180,11 +297,11 @@ export function PaymentDialog({
               animate={{ opacity: 1, scale: 1 }}
               className="text-center space-y-4"
             >
-              <div className="w-24 h-24 mx-auto bg-sage-light rounded-full flex items-center justify-center">
-                <CheckCircle className="w-12 h-12 text-sage" />
+              <div className="w-24 h-24 mx-auto bg-green-50 rounded-full flex items-center justify-center">
+                <CheckCircle className="w-12 h-12 text-green-600" />
               </div>
-              <p className="font-semibold text-lg text-sage-dark">
-                Pembayaran Berhasil!
+              <p className="font-semibold text-lg text-green-700">
+                Pesanan Berhasil!
               </p>
               <p className="text-muted-foreground">
                 Pesanan sedang diproses ke dapur

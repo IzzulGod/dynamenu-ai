@@ -1,7 +1,7 @@
 import { useSessionOrders } from '@/hooks/useOrders';
 import { getSessionId } from '@/lib/session';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, CheckCircle, ChefHat, Bell, Package, XCircle, CreditCard } from 'lucide-react';
+import { Clock, CheckCircle, ChefHat, Bell, Package, XCircle, CreditCard, Banknote, QrCode } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 
 const statusConfig = {
   pending: {
-    label: 'Menunggu Pembayaran',
+    label: 'Menunggu Konfirmasi',
     icon: Clock,
     color: 'bg-yellow-100 text-yellow-800 border-yellow-300',
   },
@@ -43,16 +43,24 @@ const statusConfig = {
 const paymentStatusConfig = {
   pending: {
     label: 'Belum Bayar',
-    color: 'bg-yellow-100 text-yellow-800',
+    color: 'bg-amber-100 text-amber-800 border-amber-300',
+    description: 'Menunggu konfirmasi pembayaran',
   },
   paid: {
-    label: 'Sudah Bayar',
-    color: 'bg-green-100 text-green-800',
+    label: 'Lunas',
+    color: 'bg-green-100 text-green-800 border-green-300',
+    description: 'Pembayaran telah dikonfirmasi',
   },
   failed: {
     label: 'Gagal',
-    color: 'bg-red-100 text-red-800',
+    color: 'bg-red-100 text-red-800 border-red-300',
+    description: 'Pembayaran gagal',
   },
+};
+
+const paymentMethodConfig = {
+  cash: { label: 'Tunai', icon: Banknote },
+  qris: { label: 'QRIS', icon: QrCode },
 };
 
 export function OrderHistory() {
@@ -110,7 +118,9 @@ export function OrderHistory() {
         {orders.map((order) => {
           const status = statusConfig[order.status];
           const paymentStatus = paymentStatusConfig[order.payment_status];
+          const paymentMethod = order.payment_method ? paymentMethodConfig[order.payment_method] : null;
           const StatusIcon = status.icon;
+          const PaymentMethodIcon = paymentMethod?.icon || CreditCard;
 
           return (
             <motion.div
@@ -131,15 +141,33 @@ export function OrderHistory() {
                       {formatTime(order.created_at)}
                     </span>
                   </div>
-                  <div className="flex gap-2 mt-2">
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {/* Order Status Badge */}
                     <Badge variant="outline" className={status.color}>
                       {status.label}
                     </Badge>
+                    
+                    {/* Payment Method Badge */}
+                    {paymentMethod && (
+                      <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200">
+                        <PaymentMethodIcon className="w-3 h-3 mr-1" />
+                        {paymentMethod.label}
+                      </Badge>
+                    )}
+                    
+                    {/* Payment Status Badge */}
                     <Badge variant="outline" className={paymentStatus.color}>
-                      <CreditCard className="w-3 h-3 mr-1" />
+                      {order.payment_status === 'paid' && <CheckCircle className="w-3 h-3 mr-1" />}
                       {paymentStatus.label}
                     </Badge>
                   </div>
+                  
+                  {/* Payment pending info for cash */}
+                  {order.payment_status === 'pending' && order.payment_method === 'cash' && (
+                    <p className="text-xs text-amber-600 mt-2">
+                      ⏳ Menunggu konfirmasi pembayaran dari waiter
+                    </p>
+                  )}
                 </CardHeader>
                 <CardContent>
                   <Separator className="mb-3" />
