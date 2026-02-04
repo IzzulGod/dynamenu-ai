@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Banknote, QrCode, CheckCircle, Loader2, Clock, Sparkles } from 'lucide-react';
+import { Banknote, QrCode, CheckCircle, Loader2, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { useUpdatePayment } from '@/hooks/useOrders';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
 
 interface PaymentDialogProps {
   open: boolean;
@@ -88,49 +87,6 @@ export function PaymentDialog({
     }
   };
 
-  // Simulate QRIS payment (for demo/testing)
-  const handleSimulateQRIS = async () => {
-    setIsProcessing(true);
-    try {
-      await updatePayment.mutateAsync({
-        orderId,
-        paymentMethod: 'qris',
-        paymentStatus: 'paid',
-      });
-      setStep('success');
-      toast.success('Pembayaran QRIS berhasil!');
-      setTimeout(() => {
-        onSuccess();
-        onOpenChange(false);
-      }, 2000);
-    } catch (error) {
-      toast.error('Gagal memproses pembayaran');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // Simulate cash confirmation by waiter (for demo/testing)
-  const handleSimulateCashConfirm = async () => {
-    setIsProcessing(true);
-    try {
-      await updatePayment.mutateAsync({
-        orderId,
-        paymentMethod: 'cash',
-        paymentStatus: 'paid',
-      });
-      setStep('success');
-      toast.success('Pembayaran tunai dikonfirmasi!');
-      setTimeout(() => {
-        onSuccess();
-        onOpenChange(false);
-      }, 2000);
-    } catch (error) {
-      toast.error('Gagal mengkonfirmasi pembayaran');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
 
   // Customer submits order without waiting (staff will confirm later)
   const handleSubmitCashOrder = async () => {
@@ -213,24 +169,6 @@ export function PaymentDialog({
                 <span>Menunggu pembayaran...</span>
               </div>
 
-              {/* Demo Simulate Button */}
-              <div className="pt-4 border-t space-y-2">
-                <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
-                  <Sparkles className="w-3 h-3 mr-1" />
-                  Mode Demo
-                </Badge>
-                <Button 
-                  onClick={handleSimulateQRIS} 
-                  disabled={isProcessing}
-                  variant="secondary"
-                  className="w-full"
-                >
-                  {isProcessing ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : null}
-                  Simulasi: Bayar QRIS
-                </Button>
-              </div>
             </motion.div>
           )}
 
@@ -266,28 +204,8 @@ export function PaymentDialog({
               </Button>
               
               <p className="text-xs text-muted-foreground">
-                Pesanan akan diproses setelah waiter mengkonfirmasi pembayaran
+                Waiter akan menghampiri meja Anda untuk menerima pembayaran
               </p>
-
-              {/* Demo Simulate Button */}
-              <div className="pt-4 border-t space-y-2">
-                <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
-                  <Sparkles className="w-3 h-3 mr-1" />
-                  Mode Demo
-                </Badge>
-                <Button 
-                  onClick={handleSimulateCashConfirm} 
-                  disabled={isProcessing}
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                >
-                  {isProcessing ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : null}
-                  Simulasi: Waiter Konfirmasi
-                </Button>
-              </div>
             </motion.div>
           )}
 
