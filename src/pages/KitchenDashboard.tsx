@@ -3,13 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ChefHat, Clock, CheckCircle, Truck, LogOut, 
-  RefreshCw, Bell, Coffee, Loader2, ShieldAlert, UtensilsCrossed
+  RefreshCw, Bell, Coffee, Loader2, ShieldAlert, UtensilsCrossed,
+  Banknote, QrCode, CreditCard
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAllOrders, useUpdateOrderStatus } from '@/hooks/useOrders';
+import { useConfirmCashPayment } from '@/hooks/useConfirmPayment';
 import { OrderWithItems } from '@/types/restaurant';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -24,6 +26,11 @@ const statusConfig = {
   cancelled: { label: 'Dibatalkan', icon: Clock, color: 'bg-red-100 text-red-700 border-red-200' },
 };
 
+const paymentMethodConfig = {
+  cash: { label: 'Tunai', icon: Banknote, color: 'bg-green-50 text-green-700 border-green-200' },
+  qris: { label: 'QRIS', icon: QrCode, color: 'bg-blue-50 text-blue-700 border-blue-200' },
+};
+
 export default function KitchenDashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'pending' | 'preparing' | 'ready'>('pending');
@@ -32,6 +39,7 @@ export default function KitchenDashboard() {
   const [staffRole, setStaffRole] = useState<string>('');
   const { data: allOrders = [], isLoading, refetch } = useAllOrders();
   const updateStatus = useUpdateOrderStatus();
+  const confirmPayment = useConfirmCashPayment();
 
   // Check auth AND staff authorization
   useEffect(() => {
@@ -93,6 +101,15 @@ export default function KitchenDashboard() {
     }
   };
 
+  const handleConfirmCashPayment = async (orderId: string) => {
+    try {
+      await confirmPayment.mutateAsync(orderId);
+      toast.success('Pembayaran tunai dikonfirmasi!');
+    } catch (error) {
+      toast.error('Gagal konfirmasi pembayaran');
+    }
+  };
+
   const formatTime = (dateString: string) => {
     return new Date(dateString).toLocaleTimeString('id-ID', {
       hour: '2-digit',
@@ -146,6 +163,9 @@ export default function KitchenDashboard() {
   const OrderCard = ({ order }: { order: OrderWithItems }) => {
     const status = statusConfig[order.status];
     const StatusIcon = status.icon;
+    const paymentMethod = order.payment_method ? paymentMethodConfig[order.payment_method] : null;
+    const PaymentIcon = paymentMethod?.icon || CreditCard;
+    const isPendingCashPayment = order.payment_method === 'cash' && order.payment_status === 'pending';
 
     return (
       <motion.div
@@ -154,7 +174,7 @@ export default function KitchenDashboard() {
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.9 }}
       >
-        <Card className="overflow-hidden">
+        <Card className={cn("overflow-hidden", isPendingCashPayment && "ring-2 ring-amber-400")}>
           <CardHeader className={cn('py-3', status.color)}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -169,6 +189,40 @@ export default function KitchenDashboard() {
             </div>
           </CardHeader>
           <CardContent className="p-4 space-y-4">
+            {/* Payment Method & Status Badges */}
+            <div className="flex flex-wrap gap-2">
+              {paymentMethod && (
+                <Badge variant="outline" className={paymentMethod.color}>
+                  <PaymentIcon className="w-3 h-3 mr-1" />
+                  {paymentMethod.label}
+                </Badge>
+              )}
+              {order.payment_status === 'pending' && (
+                <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                  Belum Bayar
+                </Badge>
+              )}
+              {order.payment_status === 'paid' && (
+                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                  <CheckCircle className="w-3 h-3 mr-1" />
+                  Lunas
+                </Badge>
+              )}
+            </div>
+
+            {/* Pending Cash Payment Alert */}
+            {isPendingCashPayment && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
+                <div className="flex items-center gap-2 text-amber-700 font-medium">
+                  <Banknote className="w-4 h-4" />
+                  Menunggu Pembayaran Tunai
+                </div>
+                <p className="text-amber-600 text-xs mt-1">
+                  Konfirmasi setelah menerima pembayaran dari pelanggan
+                </p>
+              </div>
+            )}
+
             {/* Order Items */}
             <div className="space-y-2">
               {order.order_items.map((item) => (
@@ -201,44 +255,64 @@ export default function KitchenDashboard() {
             </div>
 
             {/* Action Buttons */}
-            <div className="flex gap-2">
-              {order.status === 'pending' && (
+            <div className="flex flex-col gap-2">
+              {/* Confirm Cash Payment Button */}
+              {isPendingCashPayment && (
                 <Button
                   size="sm"
-                  className="flex-1"
-                  onClick={() => handleStatusUpdate(order.id, 'confirmed')}
+                  className="w-full bg-amber-500 hover:bg-amber-600"
+                  onClick={() => handleConfirmCashPayment(order.id)}
+                  disabled={confirmPayment.isPending}
                 >
-                  Konfirmasi
+                  {confirmPayment.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <Banknote className="w-4 h-4 mr-2" />
+                  )}
+                  Terima Pembayaran Tunai
                 </Button>
               )}
-              {order.status === 'confirmed' && (
-                <Button
-                  size="sm"
-                  className="flex-1"
-                  onClick={() => handleStatusUpdate(order.id, 'preparing')}
-                >
-                  Mulai Masak
-                </Button>
-              )}
-              {order.status === 'preparing' && (
-                <Button
-                  size="sm"
-                  className="flex-1 bg-sage hover:bg-sage/90"
-                  onClick={() => handleStatusUpdate(order.id, 'ready')}
-                >
-                  Siap Antar
-                </Button>
-              )}
-              {order.status === 'ready' && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => handleStatusUpdate(order.id, 'delivered')}
-                >
-                  Sudah Diantar
-                </Button>
-              )}
+
+              {/* Order Status Buttons */}
+              <div className="flex gap-2">
+                {order.status === 'pending' && order.payment_status === 'paid' && (
+                  <Button
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => handleStatusUpdate(order.id, 'confirmed')}
+                  >
+                    Konfirmasi
+                  </Button>
+                )}
+                {order.status === 'confirmed' && (
+                  <Button
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => handleStatusUpdate(order.id, 'preparing')}
+                  >
+                    Mulai Masak
+                  </Button>
+                )}
+                {order.status === 'preparing' && (
+                  <Button
+                    size="sm"
+                    className="flex-1 bg-sage hover:bg-sage/90"
+                    onClick={() => handleStatusUpdate(order.id, 'ready')}
+                  >
+                    Siap Antar
+                  </Button>
+                )}
+                {order.status === 'ready' && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => handleStatusUpdate(order.id, 'delivered')}
+                  >
+                    Sudah Diantar
+                  </Button>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>
