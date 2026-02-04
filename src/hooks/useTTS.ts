@@ -29,11 +29,43 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
   const isEnabledRef = useRef(isEnabled);
   const isSpeakingRef = useRef(false);
   const pendingAbortRef = useRef<AbortController | null>(null);
+  const isMountedRef = useRef(true);
 
   // Keep ref in sync with state to avoid stale closures
   useEffect(() => {
     isEnabledRef.current = isEnabled;
   }, [isEnabled]);
+
+  // Cleanup on unmount - CRITICAL fix for tab switching bug
+  useEffect(() => {
+    isMountedRef.current = true;
+    
+    return () => {
+      isMountedRef.current = false;
+      
+      // Force stop everything on unmount
+      if (pendingAbortRef.current) {
+        pendingAbortRef.current.abort();
+        pendingAbortRef.current = null;
+      }
+      
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+        audioRef.current.onplay = null;
+        audioRef.current.onended = null;
+        audioRef.current.onerror = null;
+        audioRef.current = null;
+      }
+      
+      if (audioUrlRef.current) {
+        URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = null;
+      }
+      
+      isSpeakingRef.current = false;
+    };
+  }, []);
 
   const stop = useCallback(() => {
     // Cancel any pending fetch
@@ -44,7 +76,7 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
     
     if (audioRef.current) {
       audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+      audioRef.current.src = '';
       audioRef.current.onplay = null;
       audioRef.current.onended = null;
       audioRef.current.onerror = null;
@@ -57,35 +89,50 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
     }
     
     isSpeakingRef.current = false;
-    setIsPlaying(false);
-    setIsLoading(false);
+    
+    // Only update state if mounted
+    if (isMountedRef.current) {
+      setIsPlaying(false);
+      setIsLoading(false);
+    }
   }, []);
 
-  // Custom setEnabled that also stops current playback
+  // Custom setEnabled that also stops current playback immediately
   const setEnabled = useCallback((enabled: boolean) => {
+    // Update ref immediately for instant effect
+    isEnabledRef.current = enabled;
+    
     if (!enabled) {
+      // Stop immediately when disabling
       stop();
     }
-    setIsEnabledState(enabled);
+    
+    if (isMountedRef.current) {
+      setIsEnabledState(enabled);
+    }
   }, [stop]);
 
   const speak = useCallback(async (text: string) => {
     // Use ref to get latest enabled state (avoids stale closure)
-    if (!isEnabledRef.current && !autoPlay) return;
+    if (!isEnabledRef.current) return;
     if (!text || text.trim().length === 0) return;
+    if (!isMountedRef.current) return;
     
     // Stop any current playback first (prevents double voice)
     stop();
     
     // Double check enabled state after stop (might have changed)
     if (!isEnabledRef.current) return;
+    if (!isMountedRef.current) return;
     
     // Prevent concurrent speaking
     if (isSpeakingRef.current) return;
     isSpeakingRef.current = true;
     
-    setIsLoading(true);
-    setError(null);
+    if (isMountedRef.current) {
+      setIsLoading(true);
+      setError(null);
+    }
     
     // Create abort controller for this request
     const abortController = new AbortController();
@@ -109,10 +156,10 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
         }
       );
 
-      // Check if aborted or disabled during fetch
-      if (abortController.signal.aborted || !isEnabledRef.current) {
+      // Check if aborted, disabled, or unmounted during fetch
+      if (abortController.signal.aborted || !isEnabledRef.current || !isMountedRef.current) {
         isSpeakingRef.current = false;
-        setIsLoading(false);
+        if (isMountedRef.current) setIsLoading(false);
         return;
       }
 
@@ -129,9 +176,9 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
       const audioBlob = await response.blob();
       
       // Final check before playing
-      if (!isEnabledRef.current) {
+      if (!isEnabledRef.current || !isMountedRef.current) {
         isSpeakingRef.current = false;
-        setIsLoading(false);
+        if (isMountedRef.current) setIsLoading(false);
         return;
       }
       
@@ -142,34 +189,40 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
       audioRef.current = audio;
       
       audio.onplay = () => {
-        if (isEnabledRef.current) {
+        if (isEnabledRef.current && isMountedRef.current) {
           setIsPlaying(true);
         }
       };
       
       audio.onended = () => {
-        setIsPlaying(false);
         isSpeakingRef.current = false;
         if (audioUrlRef.current) {
           URL.revokeObjectURL(audioUrlRef.current);
           audioUrlRef.current = null;
         }
         audioRef.current = null;
+        
+        if (isMountedRef.current) {
+          setIsPlaying(false);
+        }
       };
       
       audio.onerror = () => {
-        setIsPlaying(false);
         isSpeakingRef.current = false;
-        setError('Gagal memutar audio');
         if (audioUrlRef.current) {
           URL.revokeObjectURL(audioUrlRef.current);
           audioUrlRef.current = null;
         }
         audioRef.current = null;
+        
+        if (isMountedRef.current) {
+          setIsPlaying(false);
+          setError('Gagal memutar audio');
+        }
       };
       
-      // Only play if still enabled
-      if (isEnabledRef.current) {
+      // Only play if still enabled and mounted
+      if (isEnabledRef.current && isMountedRef.current) {
         await audio.play();
       } else {
         // Cleanup if disabled during load
@@ -185,13 +238,18 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
         return;
       }
       console.error('TTS error:', err);
-      setError(err instanceof Error ? err.message : 'Gagal menghasilkan suara');
       isSpeakingRef.current = false;
+      
+      if (isMountedRef.current) {
+        setError(err instanceof Error ? err.message : 'Gagal menghasilkan suara');
+      }
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
       pendingAbortRef.current = null;
     }
-  }, [autoPlay, voiceId, stop]);
+  }, [voiceId, stop]);
 
   return {
     speak,
