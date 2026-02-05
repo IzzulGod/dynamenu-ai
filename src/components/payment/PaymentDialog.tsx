@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Banknote, QrCode, CheckCircle, Loader2, Clock } from 'lucide-react';
+import { Banknote, QrCode, CheckCircle, Loader2, Clock, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { useUpdatePayment } from '@/hooks/useOrders';
+import { useUpdatePayment, useSessionOrders } from '@/hooks/useOrders';
+import { getSessionId } from '@/lib/session';
 import { toast } from 'sonner';
 
 interface PaymentDialogProps {
@@ -14,6 +15,8 @@ interface PaymentDialogProps {
   onSuccess: () => void;
 }
 
+type PaymentStep = 'select' | 'cash-waiting' | 'qris-waiting' | 'confirmed';
+
 export function PaymentDialog({
   open,
   onOpenChange,
@@ -21,30 +24,60 @@ export function PaymentDialog({
   totalAmount,
   onSuccess,
 }: PaymentDialogProps) {
-  const [step, setStep] = useState<'select' | 'qris' | 'cash-waiting' | 'success'>('select');
+  const [step, setStep] = useState<PaymentStep>('select');
   const [isProcessing, setIsProcessing] = useState(false);
   const [qrisCountdown, setQrisCountdown] = useState(60);
   const updatePayment = useUpdatePayment();
+  
+  // Get order data to check existing payment method
+  const sessionId = getSessionId();
+  const { data: orders } = useSessionOrders(sessionId);
+  
+  // Find the current order
+  const currentOrder = useMemo(() => {
+    return orders?.find(o => o.id === orderId);
+  }, [orders, orderId]);
 
-  // Reset state when dialog opens
+  // Determine the correct step based on order's existing payment state
   useEffect(() => {
-    if (open) {
-      setStep('select');
-      setIsProcessing(false);
-      setQrisCountdown(60);
+    if (!open) return;
+    
+    // Reset processing state
+    setIsProcessing(false);
+    
+    if (currentOrder) {
+      // If payment is already confirmed, show confirmation step
+      if (currentOrder.payment_status === 'paid') {
+        setStep('confirmed');
+        return;
+      }
+      
+      // If payment method is already selected, show the appropriate waiting step
+      if (currentOrder.payment_method === 'cash' && currentOrder.payment_status === 'pending') {
+        setStep('cash-waiting');
+        return;
+      }
+      
+      if (currentOrder.payment_method === 'qris' && currentOrder.payment_status === 'pending') {
+        setStep('qris-waiting');
+        setQrisCountdown(60); // Reset countdown only for QRIS
+        return;
+      }
     }
-  }, [open]);
+    
+    // Default to selection step if no payment method selected
+    setStep('select');
+  }, [open, currentOrder]);
 
   // QRIS countdown timer
   useEffect(() => {
-    if (step !== 'qris') return;
+    if (step !== 'qris-waiting') return;
     
     const timer = setInterval(() => {
       setQrisCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          toast.error('Waktu pembayaran QRIS habis');
-          setStep('select');
+          toast.error('Waktu pembayaran QRIS habis. Silakan coba lagi.');
           return 60;
         }
         return prev - 1;
@@ -53,6 +86,18 @@ export function PaymentDialog({
 
     return () => clearInterval(timer);
   }, [step]);
+  
+  // Listen for payment confirmation from kitchen side (realtime update)
+  useEffect(() => {
+    if (currentOrder?.payment_status === 'paid' && step !== 'confirmed') {
+      setStep('confirmed');
+      toast.success('Pembayaran telah dikonfirmasi!');
+      setTimeout(() => {
+        onSuccess();
+        onOpenChange(false);
+      }, 2000);
+    }
+  }, [currentOrder?.payment_status, step, onSuccess, onOpenChange]);
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -74,10 +119,12 @@ export function PaymentDialog({
       });
 
       if (method === 'qris') {
-        setStep('qris');
+        setStep('qris-waiting');
         setQrisCountdown(60);
       } else {
+        // For cash, just transition to waiting step - no success animation
         setStep('cash-waiting');
+        toast.info('Pesanan terkirim. Menunggu konfirmasi waiter.');
       }
     } catch (error) {
       console.error('Payment error:', error);
@@ -87,19 +134,13 @@ export function PaymentDialog({
     }
   };
 
-
-  // Customer submits order without waiting (staff will confirm later)
-  const handleSubmitCashOrder = async () => {
-    setStep('success');
-    toast.success('Pesanan dikirim! Waiter akan menghampiri untuk pembayaran.');
-    setTimeout(() => {
-      onSuccess();
-      onOpenChange(false);
-    }, 2000);
+  // Close dialog but keep order state (user can reopen later)
+  const handleCloseDialog = () => {
+    onOpenChange(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleCloseDialog}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Pembayaran</DialogTitle>
@@ -138,10 +179,16 @@ export function PaymentDialog({
                   <span>Tunai</span>
                 </Button>
               </div>
+              {isProcessing && (
+                <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Memproses...</span>
+                </div>
+              )}
             </motion.div>
           )}
 
-          {step === 'qris' && (
+          {step === 'qris-waiting' && (
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -166,8 +213,12 @@ export function PaymentDialog({
 
               <div className="flex items-center justify-center gap-2 text-primary">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Menunggu pembayaran...</span>
+                <span>Menunggu verifikasi pembayaran...</span>
               </div>
+              
+              <p className="text-xs text-muted-foreground">
+                Pembayaran akan dikonfirmasi secara otomatis setelah berhasil
+              </p>
 
             </motion.div>
           )}
@@ -178,38 +229,33 @@ export function PaymentDialog({
               animate={{ opacity: 1, scale: 1 }}
               className="text-center space-y-4"
             >
-              <div className="w-24 h-24 mx-auto bg-amber-50 rounded-full flex items-center justify-center">
-                <Banknote className="w-12 h-12 text-amber-600" />
+              <div className="w-24 h-24 mx-auto bg-amber-100 rounded-full flex items-center justify-center">
+                <AlertCircle className="w-12 h-12 text-amber-600" />
               </div>
-              <p className="font-semibold text-lg">Pembayaran Tunai</p>
+              <p className="font-semibold text-lg text-amber-700">Menunggu Konfirmasi</p>
               <p className="text-muted-foreground">
                 Silakan bayar <span className="font-bold text-foreground">{formatPrice(totalAmount)}</span> ke waiter
               </p>
               
               <div className="flex items-center justify-center gap-2 text-amber-600">
-                <Clock className="w-4 h-4" />
+                <Loader2 className="w-4 h-4 animate-spin" />
                 <span>Menunggu konfirmasi waiter...</span>
               </div>
-
-              {/* Submit order button - customer confirms they'll pay */}
-              <Button 
-                onClick={handleSubmitCashOrder} 
-                disabled={isProcessing} 
-                className="w-full"
-              >
-                {isProcessing ? (
-                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                ) : null}
-                Kirim Pesanan
-              </Button>
               
-              <p className="text-xs text-muted-foreground">
-                Waiter akan menghampiri meja Anda untuk menerima pembayaran
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <p className="text-xs text-amber-700">
+                  💡 Waiter akan menghampiri meja Anda untuk menerima pembayaran.
+                  <br />Pesanan akan diproses setelah pembayaran dikonfirmasi.
+                </p>
+              </div>
+              
+              <p className="text-xs text-muted-foreground pt-2">
+                Anda dapat menutup dialog ini. Status pembayaran tersimpan.
               </p>
             </motion.div>
           )}
 
-          {step === 'success' && (
+          {step === 'confirmed' && (
             <motion.div
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -219,7 +265,7 @@ export function PaymentDialog({
                 <CheckCircle className="w-12 h-12 text-green-600" />
               </div>
               <p className="font-semibold text-lg text-green-700">
-                Pesanan Berhasil!
+                Pembayaran Dikonfirmasi!
               </p>
               <p className="text-muted-foreground">
                 Pesanan sedang diproses ke dapur

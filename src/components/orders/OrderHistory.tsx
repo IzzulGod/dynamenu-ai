@@ -3,7 +3,7 @@ import { useSessionOrders } from '@/hooks/useOrders';
 import { getSessionId } from '@/lib/session';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
-import { Clock, CheckCircle, ChefHat, Bell, Package, XCircle, CreditCard, Banknote, QrCode, AlertTriangle } from 'lucide-react';
+import { Clock, CheckCircle, ChefHat, Bell, Package, XCircle, CreditCard, Banknote, QrCode, AlertTriangle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -72,6 +72,23 @@ const paymentStatusConfig = {
     color: 'bg-red-100 text-red-800 border-red-300',
     description: 'Pembayaran gagal',
   },
+};
+
+// Helper to determine appropriate payment status display
+const getPaymentStatusDisplay = (order: { payment_method: string | null; payment_status: string | null }) => {
+  if (order.payment_status === 'paid') {
+    return { label: 'Lunas', color: 'bg-green-100 text-green-800 border-green-300', icon: CheckCircle };
+  }
+  
+  if (order.payment_method === 'cash' && order.payment_status === 'pending') {
+    return { label: 'Menunggu Konfirmasi', color: 'bg-amber-100 text-amber-800 border-amber-300', icon: Loader2, animate: true };
+  }
+  
+  if (order.payment_method === 'qris' && order.payment_status === 'pending') {
+    return { label: 'Menunggu Pembayaran', color: 'bg-blue-100 text-blue-800 border-blue-300', icon: Loader2, animate: true };
+  }
+  
+  return { label: 'Belum Bayar', color: 'bg-amber-100 text-amber-800 border-amber-300', icon: null };
 };
 
 const paymentMethodConfig = {
@@ -164,8 +181,17 @@ export function OrderHistory() {
           const paymentMethod = order.payment_method ? paymentMethodConfig[order.payment_method] : null;
           const StatusIcon = status.icon;
           const PaymentMethodIcon = paymentMethod?.icon || CreditCard;
+          
+          // Enhanced payment status display
+          const paymentDisplay = getPaymentStatusDisplay(order);
+          const PaymentStatusIcon = paymentDisplay.icon;
 
-          const canPay = order.payment_status !== 'paid' && order.status !== 'cancelled' && order.status !== 'delivered';
+          // User can open payment dialog if:
+          // - Not yet paid AND not cancelled/delivered
+          // - OR already has a payment method selected (to view status)
+          const canOpenPayment = order.status !== 'cancelled' && order.status !== 'delivered';
+          const needsPayment = order.payment_status !== 'paid' && !order.payment_method;
+          const hasOngoingPayment = order.payment_status === 'pending' && order.payment_method;
           const canCancel = order.status === 'pending' && order.payment_status !== 'paid';
 
           return (
@@ -202,16 +228,25 @@ export function OrderHistory() {
                     )}
                     
                     {/* Payment Status Badge */}
-                    <Badge variant="outline" className={paymentStatus.color}>
-                      {order.payment_status === 'paid' && <CheckCircle className="w-3 h-3 mr-1" />}
-                      {paymentStatus.label}
+                    <Badge variant="outline" className={paymentDisplay.color}>
+                      {PaymentStatusIcon && (
+                        <PaymentStatusIcon className={`w-3 h-3 mr-1 ${paymentDisplay.animate ? 'animate-spin' : ''}`} />
+                      )}
+                      {paymentDisplay.label}
                     </Badge>
                   </div>
                   
                   {/* Payment pending info for cash */}
-                  {order.payment_status === 'pending' && order.payment_method === 'cash' && (
-                    <p className="text-xs text-amber-600 mt-2">
+                  {hasOngoingPayment && order.payment_method === 'cash' && (
+                    <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
                       ⏳ Menunggu konfirmasi pembayaran dari waiter
+                    </p>
+                  )}
+                  {hasOngoingPayment && order.payment_method === 'qris' && (
+                    <p className="text-xs text-blue-600 mt-2 flex items-center gap-1">
+                      <QrCode className="w-3 h-3" />
+                      📱 Menunggu scan QRIS
                     </p>
                   )}
                 </CardHeader>
@@ -241,14 +276,24 @@ export function OrderHistory() {
                   )}
 
                   {/* Action Buttons */}
-                  {canPay && (
+                  {canOpenPayment && (needsPayment || hasOngoingPayment) && (
                     <div className="flex gap-2 pt-4 mt-3 border-t">
                       <Button
                         className="flex-1"
+                        variant={hasOngoingPayment ? 'outline' : 'default'}
                         onClick={() => handlePayNow(order.id, order.total_amount || 0)}
                       >
-                        <CreditCard className="w-4 h-4 mr-2" />
-                        Bayar Sekarang
+                        {hasOngoingPayment ? (
+                          <>
+                            <Clock className="w-4 h-4 mr-2" />
+                            Lihat Status Pembayaran
+                          </>
+                        ) : (
+                          <>
+                            <CreditCard className="w-4 h-4 mr-2" />
+                            Bayar Sekarang
+                          </>
+                        )}
                       </Button>
                       
                       {canCancel && (
