@@ -13,6 +13,7 @@ import { CategoryTabs } from '@/components/menu/CategoryTabs';
 import { CartSheet } from '@/components/cart/CartSheet';
 import { AIChat } from '@/components/chat/AIChat';
 import { OrderHistory } from '@/components/orders/OrderHistory';
+import { VoiceAssistantBubble } from '@/components/voice/VoiceAssistantBubble';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -221,6 +222,9 @@ export default function MenuPage() {
 
       {/* Cart FAB */}
       <CartSheet onNavigateToOrders={handleNavigateToOrders} />
+      
+      {/* Voice Assistant Floating Bubble */}
+      <VoiceAssistantBubble />
     </div>
   );
 }

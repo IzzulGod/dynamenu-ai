@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Bot, User, Sparkles, Loader2, ShoppingCart, FileText, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
+import { Send, Bot, User, Sparkles, Loader2, ShoppingCart, FileText, Mic, MicOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ChatMessage } from '@/types/restaurant';
 import { cn } from '@/lib/utils';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
-import { useTTS } from '@/hooks/useTTS';
+import { VoiceAssistantButton } from '@/components/voice/VoiceAssistantButton';
 import { toast } from 'sonner';
 
 interface AIChatProps {
@@ -21,9 +21,6 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // TTS hook
-  const { speak, stop: stopTTS, isPlaying, isLoading: ttsLoading, isEnabled: ttsEnabled, setEnabled: setTTSEnabled } = useTTS();
 
   // Voice input hook
   const { isListening, isSupported: sttSupported, startListening, stopListening, transcript } = useVoiceInput({
@@ -53,32 +50,6 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
   useEffect(() => {
     scrollToBottom();
   }, [messages, pendingUserMessage]);
-
-  // Play TTS for new AI messages - use ref to track and prevent double play
-  const lastMessageIdRef = useRef<string | null>(null);
-  const ttsEnabledRef = useRef(ttsEnabled);
-  
-  // Keep ref in sync
-  useEffect(() => {
-    ttsEnabledRef.current = ttsEnabled;
-  }, [ttsEnabled]);
-  
-  useEffect(() => {
-    if (messages.length === 0) return;
-    
-    const lastMessage = messages[messages.length - 1];
-    
-    // Only speak if: enabled, is assistant, and not already spoken
-    if (
-      ttsEnabledRef.current && 
-      lastMessage.role === 'assistant' && 
-      lastMessage.id !== lastMessageIdRef.current
-    ) {
-      lastMessageIdRef.current = lastMessage.id || lastMessage.content;
-      // Speak immediately when message arrives
-      speak(lastMessage.content);
-    }
-  }, [messages, speak]);
 
   const handleSendMessage = useCallback(async (messageText: string) => {
     if (!messageText.trim() || isLoading) return;
@@ -111,14 +82,6 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
     }
   };
 
-  const toggleTTS = () => {
-    if (isPlaying) {
-      stopTTS();
-    }
-    setTTSEnabled(!ttsEnabled);
-    toast.success(ttsEnabled ? 'Suara AI dimatikan' : 'Suara AI diaktifkan');
-  };
-
   const quickSuggestions = [
     'Menu rekomendasinya apa?',
     'Ada yang pedas ga?',
@@ -149,23 +112,8 @@ export function AIChat({ messages, onSendMessage, isLoading, tableNumber }: AICh
             </p>
           </div>
           
-          {/* TTS Toggle */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn(
-              "w-8 h-8 rounded-full transition-colors",
-              ttsEnabled ? "text-primary bg-primary/10" : "text-muted-foreground"
-            )}
-            onClick={toggleTTS}
-            title={ttsEnabled ? "Matikan suara AI" : "Aktifkan suara AI"}
-          >
-            {ttsEnabled ? (
-              <Volume2 className={cn("w-4 h-4", isPlaying && "animate-pulse")} />
-            ) : (
-              <VolumeX className="w-4 h-4" />
-            )}
-          </Button>
+          {/* Voice Assistant Button */}
+          <VoiceAssistantButton />
           
           <Sparkles className="w-5 h-5 text-primary animate-pulse" />
         </div>
