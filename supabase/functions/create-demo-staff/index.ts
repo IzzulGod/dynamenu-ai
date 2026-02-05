@@ -6,16 +6,30 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-admin-secret',
 };
 
-// Environment-based secret for demo staff creation
-// This adds a layer of protection while keeping the demo functionality
-const DEMO_ADMIN_SECRET = Deno.env.get('DEMO_ADMIN_SECRET') || 'lovable-demo-2024';
-
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+     // SECURITY: Get admin secret from environment - NO fallback to prevent weak auth
+     const DEMO_ADMIN_SECRET = Deno.env.get('DEMO_ADMIN_SECRET');
+     
+     // If secret is not configured, the service is not available
+     if (!DEMO_ADMIN_SECRET) {
+       console.warn('[create-demo-staff] DEMO_ADMIN_SECRET not configured - service unavailable');
+       return new Response(
+         JSON.stringify({
+           success: false,
+           error: 'Service not configured. Contact administrator.',
+         }),
+         {
+           status: 503,
+           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+         }
+       );
+     }
+ 
     // SECURITY: Validate admin secret or authenticated admin user
     const authHeader = req.headers.get('authorization');
     const adminSecret = req.headers.get('x-admin-secret');
