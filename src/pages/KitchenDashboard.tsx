@@ -4,12 +4,25 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ChefHat, Clock, CheckCircle, Truck, LogOut, 
   RefreshCw, Bell, Coffee, Loader2, ShieldAlert, UtensilsCrossed,
-  Banknote, QrCode, CreditCard
+  Banknote, QrCode, CreditCard, XCircle, AlertTriangle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { useKitchenCancelOrder } from '@/hooks/useKitchenCancelOrder';
 import { useAllOrders, useUpdateOrderStatus } from '@/hooks/useOrders';
 import { useConfirmCashPayment } from '@/hooks/useConfirmPayment';
 import { OrderWithItems } from '@/types/restaurant';
@@ -40,6 +53,8 @@ export default function KitchenDashboard() {
   const { data: allOrders = [], isLoading, refetch } = useAllOrders();
   const updateStatus = useUpdateOrderStatus();
   const confirmPayment = useConfirmCashPayment();
+   const kitchenCancel = useKitchenCancelOrder();
+   const [cancelReason, setCancelReason] = useState('');
 
   // Check auth AND staff authorization
   useEffect(() => {
@@ -154,6 +169,19 @@ export default function KitchenDashboard() {
     }
   };
 
+   const handleKitchenCancelOrder = async (orderId: string) => {
+     try {
+       await kitchenCancel.mutateAsync({ 
+         orderId, 
+         reason: cancelReason || 'Dibatalkan oleh dapur' 
+       });
+       toast.success('Pesanan berhasil dibatalkan');
+       setCancelReason('');
+     } catch (error) {
+       toast.error('Gagal membatalkan pesanan');
+     }
+   };
+ 
   const formatTime = (dateString: string) => {
     return new Date(dateString).toLocaleTimeString('id-ID', {
       hour: '2-digit',
@@ -356,6 +384,60 @@ export default function KitchenDashboard() {
                     Sudah Diantar
                   </Button>
                 )}
+                   
+                   {/* Cancel/Close Order Button */}
+                   <AlertDialog>
+                     <AlertDialogTrigger asChild>
+                       <Button
+                         size="sm"
+                         variant="outline"
+                         className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                       >
+                         <XCircle className="w-4 h-4" />
+                       </Button>
+                     </AlertDialogTrigger>
+                     <AlertDialogContent>
+                       <AlertDialogHeader>
+                         <AlertDialogTitle className="flex items-center gap-2">
+                           <AlertTriangle className="w-5 h-5 text-destructive" />
+                           Batalkan Pesanan?
+                         </AlertDialogTitle>
+                         <AlertDialogDescription className="space-y-3">
+                           <p>
+                             Pesanan Meja {order.tables?.table_number || '-'} akan dibatalkan. 
+                             Pelanggan akan menerima notifikasi pembatalan.
+                           </p>
+                           <div className="space-y-2">
+                             <label className="text-sm font-medium text-foreground">
+                               Alasan pembatalan (opsional):
+                             </label>
+                             <Textarea
+                               placeholder="Contoh: Stok habis, pesanan duplikat, dll"
+                               value={cancelReason}
+                               onChange={(e) => setCancelReason(e.target.value)}
+                               className="resize-none"
+                               rows={2}
+                             />
+                           </div>
+                         </AlertDialogDescription>
+                       </AlertDialogHeader>
+                       <AlertDialogFooter>
+                         <AlertDialogCancel onClick={() => setCancelReason('')}>
+                           Batal
+                         </AlertDialogCancel>
+                         <AlertDialogAction
+                           onClick={() => handleKitchenCancelOrder(order.id)}
+                           className="bg-destructive hover:bg-destructive/90"
+                           disabled={kitchenCancel.isPending}
+                         >
+                           {kitchenCancel.isPending ? (
+                             <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                           ) : null}
+                           Ya, Batalkan
+                         </AlertDialogAction>
+                       </AlertDialogFooter>
+                     </AlertDialogContent>
+                   </AlertDialog>
               </div>
             </div>
           </CardContent>

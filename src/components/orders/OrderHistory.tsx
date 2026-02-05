@@ -1,9 +1,10 @@
 import { useSessionOrders } from '@/hooks/useOrders';
  import { useCancelOrder } from '@/hooks/useCancelOrder';
+ import { useDeleteOrder } from '@/hooks/useDeleteOrder';
 import { getSessionId } from '@/lib/session';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState } from 'react';
-import { Clock, CheckCircle, ChefHat, Bell, Package, XCircle, CreditCard, Banknote, QrCode, AlertTriangle, Loader2 } from 'lucide-react';
+ import { useState, useEffect, useRef } from 'react';
+ import { Clock, CheckCircle, ChefHat, Bell, Package, XCircle, CreditCard, Banknote, QrCode, AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -100,11 +101,43 @@ export function OrderHistory() {
   const sessionId = getSessionId();
   const { data: orders, isLoading } = useSessionOrders(sessionId);
   const cancelOrder = useCancelOrder();
+   const deleteOrder = useDeleteOrder();
   
   const [showPayment, setShowPayment] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedOrderAmount, setSelectedOrderAmount] = useState(0);
 
+   // Track previous order statuses to detect kitchen cancellations
+   const prevOrdersRef = useRef<Map<string, string>>(new Map());
+ 
+   // Listen for orders being cancelled by kitchen
+   useEffect(() => {
+     if (!orders) return;
+ 
+     const currentStatuses = new Map<string, string>();
+     
+     orders.forEach(order => {
+       const prevStatus = prevOrdersRef.current.get(order.id);
+       currentStatuses.set(order.id, order.status);
+       
+       // If order was not cancelled before but now is cancelled
+       // Check if notes contain [Dibatalkan:] which indicates kitchen cancellation
+       if (prevStatus && prevStatus !== 'cancelled' && order.status === 'cancelled') {
+         if (order.notes?.includes('[Dibatalkan:')) {
+           toast.error(
+             'Pesanan dibatalkan oleh dapur',
+             { 
+               description: order.notes?.match(/\[Dibatalkan: (.+?)\]/)?.[1] || 'Ada kesalahan pada pesanan',
+               duration: 8000,
+             }
+           );
+         }
+       }
+     });
+ 
+     prevOrdersRef.current = currentStatuses;
+   }, [orders]);
+ 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
@@ -142,6 +175,16 @@ export function OrderHistory() {
     }
   };
 
+   const handleDeleteOrder = async (orderId: string) => {
+     try {
+       await deleteOrder.mutateAsync(orderId);
+       toast.success('Riwayat pesanan dihapus');
+     } catch (error) {
+       console.error('Delete error:', error);
+       toast.error('Gagal menghapus riwayat');
+     }
+   };
+ 
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -193,6 +236,7 @@ export function OrderHistory() {
           const needsPayment = order.payment_status !== 'paid' && !order.payment_method;
           const hasOngoingPayment = order.payment_status === 'pending' && order.payment_method;
           const canCancel = order.status === 'pending' && order.payment_status !== 'paid';
+           const canDelete = order.status === 'cancelled';
 
           return (
             <motion.div
@@ -327,6 +371,37 @@ export function OrderHistory() {
                       )}
                     </div>
                   )}
+                   
+                   {/* Delete cancelled order button */}
+                   {canDelete && (
+                     <div className="pt-4 mt-3 border-t">
+                       <AlertDialog>
+                         <AlertDialogTrigger asChild>
+                           <Button variant="outline" className="w-full text-muted-foreground hover:text-destructive">
+                             <Trash2 className="w-4 h-4 mr-2" />
+                             Hapus dari Riwayat
+                           </Button>
+                         </AlertDialogTrigger>
+                         <AlertDialogContent>
+                           <AlertDialogHeader>
+                             <AlertDialogTitle>Hapus Riwayat Pesanan?</AlertDialogTitle>
+                             <AlertDialogDescription>
+                               Riwayat pesanan ini akan dihapus secara permanen. Tindakan ini tidak dapat dibatalkan.
+                             </AlertDialogDescription>
+                           </AlertDialogHeader>
+                           <AlertDialogFooter>
+                             <AlertDialogCancel>Batal</AlertDialogCancel>
+                             <AlertDialogAction
+                               onClick={() => handleDeleteOrder(order.id)}
+                               className="bg-destructive hover:bg-destructive/90"
+                             >
+                               Hapus
+                             </AlertDialogAction>
+                           </AlertDialogFooter>
+                         </AlertDialogContent>
+                       </AlertDialog>
+                     </div>
+                   )}
                 </CardContent>
               </Card>
             </motion.div>
