@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { MessageCircle, Grid, AlertTriangle, MapPin, ClipboardList } from 'lucide-react';
@@ -12,7 +12,6 @@ import { MenuItemCard } from '@/components/menu/MenuItemCard';
 import { CategoryTabs } from '@/components/menu/CategoryTabs';
 import { CartSheet } from '@/components/cart/CartSheet';
 import { AIChat } from '@/components/chat/AIChat';
-import { PaymentDialog } from '@/components/payment/PaymentDialog';
 import { OrderHistory } from '@/components/orders/OrderHistory';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -25,8 +24,6 @@ export default function MenuPage() {
   
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'menu' | 'chat' | 'orders'>('menu');
-  const [showPayment, setShowPayment] = useState(false);
-  const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
   
   const sessionId = getSessionId();
   
@@ -34,12 +31,14 @@ export default function MenuPage() {
   const { data: categories = [], isLoading: categoriesLoading } = useCategories();
   const { data: menuItems = [], isLoading: menuLoading } = useMenuItems(selectedCategory ?? undefined);
   
-  const { items: cartItems, getTotalAmount, clearCart, setTable, tableId } = useCart();
+  const { setTable, tableId } = useCart();
   const { messages, sendMessage, isLoading: chatLoading } = useChat(sessionId, table?.id ?? null, {
     menuItems,
   });
-  
-  const createOrder = useCreateOrder();
+
+  const handleNavigateToOrders = useCallback(() => {
+    setActiveTab('orders');
+  }, []);
 
   // Set table when loaded
   useEffect(() => {
@@ -71,42 +70,6 @@ export default function MenuPage() {
     greetingSentRef.current = true;
     sendMessage(`Halo! Aku baru sampai di meja ${table.table_number}`).catch(console.error);
   }, [table, messages.length, sendMessage, chatLoading, sessionId]);
-
-  const handleCheckout = async () => {
-    if (!table || cartItems.length === 0) {
-      toast.error('Keranjang masih kosong!');
-      return;
-    }
-
-    try {
-      const order = await createOrder.mutateAsync({
-        tableId: table.id,
-        sessionId,
-        items: cartItems.map((item) => ({
-          menuItemId: item.menuItem.id,
-          quantity: item.quantity,
-          unitPrice: item.menuItem.price,
-          notes: item.notes,
-        })),
-        totalAmount: getTotalAmount(),
-      });
-
-      setCurrentOrderId(order.id);
-      setShowPayment(true);
-    } catch (error) {
-      console.error('Checkout error:', error);
-      toast.error('Gagal membuat pesanan');
-    }
-  };
-
-  const handlePaymentSuccess = () => {
-    clearCart();
-    setCurrentOrderId(null);
-    toast.success('Pesanan dikirim ke dapur! 🍳');
-    
-    // Send confirmation via chat
-    sendMessage('Pesanan saya sudah dibayar, tolong proses ya!').catch(console.error);
-  };
 
   // Error state - invalid table
   if (tableNumber && !tableLoading && !table) {
@@ -257,18 +220,7 @@ export default function MenuPage() {
       </main>
 
       {/* Cart FAB */}
-      <CartSheet onCheckout={handleCheckout} />
-
-      {/* Payment Dialog */}
-      {currentOrderId && (
-        <PaymentDialog
-          open={showPayment}
-          onOpenChange={setShowPayment}
-          orderId={currentOrderId}
-          totalAmount={getTotalAmount()}
-          onSuccess={handlePaymentSuccess}
-        />
-      )}
+      <CartSheet onNavigateToOrders={handleNavigateToOrders} />
     </div>
   );
 }

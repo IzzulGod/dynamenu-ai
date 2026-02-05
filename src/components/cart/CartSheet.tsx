@@ -1,19 +1,59 @@
+import { useNavigate } from 'react-router-dom';
 import { useCart } from '@/hooks/useCart';
+import { useCreateOrder } from '@/hooks/useOrders';
+import { getSessionId } from '@/lib/session';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ShoppingBag, Minus, Plus, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
+import { toast } from 'sonner';
 
 interface CartSheetProps {
-  onCheckout: () => void;
+  onCheckout?: () => void;
+  onNavigateToOrders?: () => void;
 }
 
-export function CartSheet({ onCheckout }: CartSheetProps) {
-  const { items, getTotalAmount, getTotalItems, updateQuantity, removeItem } = useCart();
+export function CartSheet({ onCheckout, onNavigateToOrders }: CartSheetProps) {
+  const navigate = useNavigate();
+  const { items, getTotalAmount, getTotalItems, updateQuantity, removeItem, clearCart, tableId, tableNumber } = useCart();
+  const createOrder = useCreateOrder();
   const totalItems = getTotalItems();
   const totalAmount = getTotalAmount();
+  const sessionId = getSessionId();
+
+  const handlePlaceOrder = async () => {
+    if (!tableId || items.length === 0) {
+      toast.error('Keranjang masih kosong!');
+      return;
+    }
+
+    try {
+      await createOrder.mutateAsync({
+        tableId,
+        sessionId,
+        items: items.map((item) => ({
+          menuItemId: item.menuItem.id,
+          quantity: item.quantity,
+          unitPrice: item.menuItem.price,
+          notes: item.notes,
+        })),
+        totalAmount: getTotalAmount(),
+      });
+
+      clearCart();
+      toast.success('Pesanan berhasil dibuat! Silakan lakukan pembayaran.');
+      
+      // Navigate to orders tab
+      if (onNavigateToOrders) {
+        onNavigateToOrders();
+      }
+    } catch (error) {
+      console.error('Order error:', error);
+      toast.error('Gagal membuat pesanan');
+    }
+  };
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -138,9 +178,10 @@ export function CartSheet({ onCheckout }: CartSheetProps) {
               </div>
               <Button
                 className="w-full h-12 text-lg font-semibold"
-                onClick={onCheckout}
+                onClick={handlePlaceOrder}
+                disabled={createOrder.isPending}
               >
-                Pesan Sekarang
+                {createOrder.isPending ? 'Memproses...' : 'Pesan Sekarang'}
               </Button>
             </div>
           </>
