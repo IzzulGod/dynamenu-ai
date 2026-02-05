@@ -3,8 +3,12 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-admin-secret',
 };
+
+// Environment-based secret for demo staff creation
+// This adds a layer of protection while keeping the demo functionality
+const DEMO_ADMIN_SECRET = Deno.env.get('DEMO_ADMIN_SECRET') || 'lovable-demo-2024';
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -12,6 +16,59 @@ serve(async (req) => {
   }
 
   try {
+    // SECURITY: Validate admin secret or authenticated admin user
+    const authHeader = req.headers.get('authorization');
+    const adminSecret = req.headers.get('x-admin-secret');
+    
+    let isAuthorized = false;
+    
+    // Option 1: Check for admin secret (for development/demo purposes)
+    if (adminSecret === DEMO_ADMIN_SECRET) {
+      isAuthorized = true;
+      console.log('[create-demo-staff] Authorized via admin secret');
+    }
+    
+    // Option 2: Check for authenticated admin user
+    if (!isAuthorized && authHeader?.startsWith('Bearer ')) {
+      const supabaseAuth = createClient(
+        Deno.env.get('SUPABASE_URL') ?? '',
+        Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+        { global: { headers: { Authorization: authHeader } } }
+      );
+      
+      const token = authHeader.replace('Bearer ', '');
+      const { data: claimsData, error: claimsError } = await supabaseAuth.auth.getClaims(token);
+      
+      if (!claimsError && claimsData?.claims?.sub) {
+        // Check if user is an admin
+        const { data: profile } = await supabaseAuth
+          .from('staff_profiles')
+          .select('role')
+          .eq('user_id', claimsData.claims.sub)
+          .eq('is_active', true)
+          .single();
+        
+        if (profile?.role === 'admin') {
+          isAuthorized = true;
+          console.log('[create-demo-staff] Authorized via admin user:', claimsData.claims.sub);
+        }
+      }
+    }
+    
+    if (!isAuthorized) {
+      console.warn('[create-demo-staff] Unauthorized access attempt');
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Unauthorized. Admin authentication required.',
+        }),
+        {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+    
     // Create admin client
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -27,6 +84,8 @@ serve(async (req) => {
     const demoEmail = 'staff@demo.com';
     const demoPassword = 'demo1234';
 
+    console.log('[create-demo-staff] Creating/updating demo staff account');
+    
     // Check if user already exists
     const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers();
     const existingUser = existingUsers?.users?.find(u => u.email === demoEmail);
@@ -39,6 +98,7 @@ serve(async (req) => {
         password: demoPassword,
       });
       userId = existingUser.id;
+      console.log('[create-demo-staff] Updated existing user:', userId);
     } else {
       // Create new user
       const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
@@ -49,6 +109,7 @@ serve(async (req) => {
 
       if (createError) throw createError;
       userId = newUser.user.id;
+      console.log('[create-demo-staff] Created new user:', userId);
     }
 
     // Check if staff profile exists
@@ -70,8 +131,11 @@ serve(async (req) => {
         });
 
       if (profileError) throw profileError;
+      console.log('[create-demo-staff] Created staff profile for user:', userId);
     }
 
+    console.log('[create-demo-staff] Demo staff account ready');
+    
     return new Response(
       JSON.stringify({
         success: true,
